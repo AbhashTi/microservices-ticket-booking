@@ -1,6 +1,7 @@
 // ============================================================
-// Backend Microservices Pipeline
-// Builds ALL 7 services → Docker push → Deploy to Minikube
+// Backend Pipeline – Stadium Ticket Booking System
+// Builds all microservices → Docker rebuild → Live via docker-compose
+// Optionally deploys to Minikube K8s
 // ============================================================
 pipeline {
     agent any
@@ -9,17 +10,23 @@ pipeline {
     parameters {
         string(
             name: 'IMAGE_TAG',
-            defaultValue: "main-${env.BUILD_NUMBER}",
+            defaultValue: "build-${env.BUILD_NUMBER}",
             description: 'Docker image tag for all services'
+        )
+        booleanParam(
+            name: 'DEPLOY_K8S',
+            defaultValue: false,
+            description: 'Also deploy to Minikube after docker-compose restart?'
         )
     }
 
     environment {
         DOCKER_REPO   = 'ketan803'
         K8S_NAMESPACE = 'movie-app'
-        PATH = "/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:${env.PATH}"
+        PROJECT_DIR   = '/home/iiitb/Movie-Booking-System-Microservices'
+        KUBECTL       = '/snap/bin/kubectl'
 
-        // All microservice folder names (must match directory names)
+        // All microservice folder names (match directory names exactly)
         SERVICES = 'discovery-server,api-gateway,user-service,match-service,booking-service,payment-service,notification-service'
     }
 
@@ -31,23 +38,22 @@ pipeline {
             }
         }
 
-        stage('Build & Test All Services') {
+        stage('Build All Microservices') {
             steps {
                 script {
                     def serviceList = env.SERVICES.split(',')
                     def parallelBuilds = [:]
 
                     serviceList.each { svc ->
-                        parallelBuilds["Build ${svc}"] = {
-                            dir(svc) {
+                        parallelBuilds["Build: ${svc}"] = {
+                            dir("${env.PROJECT_DIR}/${svc}") {
                                 echo "===== Building ${svc} ====="
                                 sh 'chmod +x mvnw 2>/dev/null || true'
                                 sh './mvnw -B clean package -DskipTests'
-                                echo "===== ${svc} build complete ====="
+                                echo "===== ${svc} done ====="
                             }
                         }
                     }
-
                     parallel parallelBuilds
                 }
             }
@@ -56,19 +62,17 @@ pipeline {
         stage('Docker Build All') {
             steps {
                 script {
-                    def imageTag = params.IMAGE_TAG ?: "main-${env.BUILD_NUMBER}"
-                    def serviceList = env.SERVICES.split(',')
+                    def imageTag = params.IMAGE_TAG ?: "build-${env.BUILD_NUMBER}"
+                    env.IMAGE_TAG_FINAL = imageTag
 
+                    def serviceList = env.SERVICES.split(',')
                     serviceList.each { svc ->
-                        dir(svc) {
-                            def imageName = "${DOCKER_REPO}/${svc}:${imageTag}"
+                        dir("${env.PROJECT_DIR}/${svc}") {
+                            def imageName = "${env.DOCKER_REPO}/${svc}:${imageTag}"
                             echo "Building Docker image: ${imageName}"
                             sh "docker build -t ${imageName} ."
                         }
                     }
-
-                    // Store tag for later stages
-                    env.IMAGE_TAG_FINAL = imageTag
                 }
             }
         }
@@ -83,11 +87,10 @@ pipeline {
                 )]) {
                     script {
                         sh 'echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin'
-
                         def serviceList = env.SERVICES.split(',')
                         serviceList.each { svc ->
-                            def imageName = "${DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
-                            echo "Pushing ${imageName}"
+                            def imageName = "${env.DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
+                            echo "Pushing ${imageName}..."
                             sh "docker push ${imageName}"
                         }
                     }
@@ -95,28 +98,46 @@ pipeline {
             }
         }
 
-        stage('Deploy to Minikube') {
+        stage('Restart via Docker Compose') {
             when { expression { currentBuild.currentResult == 'SUCCESS' } }
             steps {
+                echo "Restarting all services via docker-compose with new images..."
+                dir("${env.PROJECT_DIR}") {
+                    sh '''
+                        docker compose down --remove-orphans || true
+                        docker compose up -d --build
+                        sleep 15
+                        echo "=== Running containers ==="
+                        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Minikube (Optional)') {
+            when {
+                allOf {
+                    expression { currentBuild.currentResult == 'SUCCESS' }
+                    expression { params.DEPLOY_K8S == true }
+                }
+            }
+            steps {
                 script {
-                    sh """
-                        echo "Switching to Minikube context..."
-                        sudo -n -u ketan /snap/bin/kubectl config use-context minikube
-                    """
+                    sh "${env.KUBECTL} create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | ${env.KUBECTL} apply -f -"
 
                     def serviceList = env.SERVICES.split(',')
                     serviceList.each { svc ->
-                        def imageName = "${DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
-                        echo "Deploying ${svc} → ${imageName}"
+                        def imageName = "${env.DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
                         sh """
-                            sudo -n -u ketan /snap/bin/kubectl set image deployment/${svc} ${svc}=${imageName} -n ${K8S_NAMESPACE} || echo "Deployment ${svc} not found, skipping..."
+                            ${env.KUBECTL} set image deployment/${svc} ${svc}=${imageName} -n ${env.K8S_NAMESPACE} 2>/dev/null || \
+                            echo "Deployment ${svc} not found in K8s – skipping"
                         """
                     }
 
-                    // Wait for rollouts
                     serviceList.each { svc ->
                         sh """
-                            sudo -n -u ketan /snap/bin/kubectl rollout status deployment/${svc} -n ${K8S_NAMESPACE} --timeout=120s || echo "Rollout for ${svc} timed out or not found"
+                            ${env.KUBECTL} rollout status deployment/${svc} -n ${env.K8S_NAMESPACE} --timeout=120s 2>/dev/null || \
+                            echo "Rollout for ${svc} not found – skipping"
                         """
                     }
                 }
@@ -126,10 +147,13 @@ pipeline {
 
     post {
         success {
-            echo "✅ All ${env.SERVICES.split(',').size()} microservices built and deployed successfully (Build #${env.BUILD_NUMBER})"
+            echo "✅ Backend pipeline SUCCESS (Build #${env.BUILD_NUMBER})"
+            echo "🌐 App running at: http://172.16.180.127:80"
+            echo "🔗 API Gateway at: http://172.16.180.127:8085"
+            echo "📋 Eureka at:      http://172.16.180.127:8761"
         }
         failure {
-            echo "❌ Backend pipeline failed at Build #${env.BUILD_NUMBER}"
+            echo "❌ Backend pipeline FAILED at Build #${env.BUILD_NUMBER}"
         }
     }
 }
