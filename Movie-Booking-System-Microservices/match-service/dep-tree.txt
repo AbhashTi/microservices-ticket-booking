@@ -1,0 +1,27 @@
+com.movietime:movie-service:jar:0.0.1-SNAPSHOT
++- org.springframework.boot:spring-boot-starter-data-jpa:jar:3.5.7:compile
+|  +- org.springframework.boot:spring-boot-starter-jdbc:jar:3.5.7:compile
+|  |  \- org.springframework:spring-jdbc:jar:6.2.12:compile
+|  +- org.springframework.data:spring-data-jpa:jar:3.5.5:compile
+|  |  +- org.springframework:spring-orm:jar:6.2.12:compile
+|  |  +- org.springframework:spring-context:jar:6.2.12:compile
+|  |  +- org.springframework:spring-aop:jar:6.2.12:compile
+|  |  +- org.springframework:spring-tx:jar:6.2.12:compile
+|  |  \- org.springframework:spring-beans:jar:6.2.12:compile
+|  \- org.springframework:spring-aspects:jar:6.2.12:compile
++- org.springframework.boot:spring-boot-starter-web:jar:3.5.7:compile
+|  +- org.springframework:spring-web:jar:6.2.12:compile
+|  \- org.springframework:spring-webmvc:jar:6.2.12:compile
+|     \- org.springframework:spring-expression:jar:6.2.12:compile
++- org.springframework.cloud:spring-cloud-starter-netflix-eureka-client:jar:4.3.0:compile
+|  \- org.springframework.cloud:spring-cloud-starter-loadbalancer:jar:4.3.0:compile
+|     \- org.springframework.boot:spring-boot-starter-cache:jar:3.5.7:compile
+|        \- org.springframework:spring-context-support:jar:6.2.12:compile
++- org.springdoc:springdoc-openapi-starter-webmvc-ui:jar:2.6.0:compile
+|  \- org.springdoc:springdoc-openapi-starter-webmvc-api:jar:2.6.0:compile
+|     \- org.springdoc:springdoc-openapi-starter-common:jar:2.6.0:compile
+\- org.springframework.boot:spring-boot-starter-test:jar:3.5.7:test
+   +- org.springframework:spring-core:jar:6.2.12:compile
+   |  \- org.springframework:spring-jcl:jar:6.2.12:compile
+   \- org.springframework:spring-test:jar:6.2.12:test
+fr

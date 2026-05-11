@@ -1,0 +1,108 @@
+// ============================================================
+// Frontend Pipeline
+// npm install → React build → Docker build → Push → Deploy
+// ============================================================
+pipeline {
+    agent any
+    options { timestamps() }
+
+    tools {
+        nodejs 'Node18'   // Must match Jenkins → Manage Tools name
+    }
+
+    parameters {
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: "main-${env.BUILD_NUMBER}",
+            description: 'Docker image tag'
+        )
+    }
+
+    environment {
+        SERVICE_NAME  = 'match-frontend'
+        DOCKER_REPO   = 'ketan803'
+        K8S_NAMESPACE = 'movie-app'
+        PATH = "/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:${env.PATH}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                echo "Checking Node & NPM version..."
+                sh 'node -v'
+                sh 'npm -v'
+
+                echo "Installing dependencies..."
+                sh 'npm ci'
+            }
+        }
+
+        stage('Build React App') {
+            steps {
+                echo "Building React App..."
+                sh 'CI=false npm run build'
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                script {
+                    def imageTag = params.IMAGE_TAG ?: "main-${env.BUILD_NUMBER}"
+                    env.IMAGE_NAME = "${DOCKER_REPO}/${SERVICE_NAME}:${imageTag}"
+                }
+                echo "Building Docker Image: ${env.IMAGE_NAME}"
+                sh 'docker build -t "$IMAGE_NAME" .'
+            }
+        }
+
+        stage('Docker Push') {
+            when { expression { currentBuild.currentResult == 'SUCCESS' } }
+            steps {
+                echo "Pushing to Docker Hub..."
+                withCredentials([usernamePassword(
+                    credentialsId: 'docker_creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker push "$IMAGE_NAME"
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Minikube') {
+            when { expression { currentBuild.currentResult == 'SUCCESS' } }
+            steps {
+                sh """
+                    echo "Switching to Minikube context..."
+                    sudo -n -u ketan /snap/bin/kubectl config use-context minikube
+
+                    echo "Updating frontend image..."
+                    sudo -n -u ketan /snap/bin/kubectl set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${IMAGE_NAME} -n ${K8S_NAMESPACE}
+
+                    echo "Waiting for rollout..."
+                    sudo -n -u ketan /snap/bin/kubectl rollout status deployment/${SERVICE_NAME} -n ${K8S_NAMESPACE} --timeout=120s
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Frontend built and deployed successfully (Build #${env.BUILD_NUMBER})"
+            echo "   Image: ${env.IMAGE_NAME}"
+        }
+        failure {
+            echo "❌ Frontend pipeline failed at Build #${env.BUILD_NUMBER}"
+        }
+    }
+}

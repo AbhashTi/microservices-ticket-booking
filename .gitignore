@@ -1,0 +1,21 @@
+# Node
+node_modules/
+build/
+dist/
+coverage/
+npm-debug.log
+package-lock.json
+
+# Java / Maven
+target/
+*.class
+*.jar
+.idea/
+*.iml
+
+# Env
+.env
+.env.*
+
+# OS
+.DS_Store

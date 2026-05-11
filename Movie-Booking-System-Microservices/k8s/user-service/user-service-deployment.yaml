@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: movie-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: ketan803/user-service:main-1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8083
+
+          # >>> ADD THIS BLOCK FOR HPA <<<
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              cpu: 600m
+              memory: 768Mi
+          # >>> END BLOCK <<<
+
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "docker"
+
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://user-pg:5432/user_db
+
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: user-service.user-pg.credentials.postgresql.acid.zalan.do
+                  key: username   # THIS RETURNS: user_service
+
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user-service.user-pg.credentials.postgresql.acid.zalan.do
+                  key: password
+            - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
+              value: "http://eureka:8761/eureka/"
+
+            - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS
+              value: "true"
+
+            - name: SPRING_RABBITMQ_HOST
+              value: "rabbitmq"
+
+            - name: SPRING_RABBITMQ_PORT
+              value: "5672"
+
+            - name: SPRING_RABBITMQ_USERNAME
+              value: "root"
+
+            - name: SPRING_RABBITMQ_PASSWORD
+              value: "root"
+
+            - name: SPRING_REDIS_HOST
+              value: "redis"
+
+            - name: SPRING_REDIS_PORT
+              value: "6379"

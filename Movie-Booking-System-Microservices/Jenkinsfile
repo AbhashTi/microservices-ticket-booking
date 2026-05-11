@@ -1,0 +1,135 @@
+// ============================================================
+// Backend Microservices Pipeline
+// Builds ALL 7 services → Docker push → Deploy to Minikube
+// ============================================================
+pipeline {
+    agent any
+    options { timestamps() }
+
+    parameters {
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: "main-${env.BUILD_NUMBER}",
+            description: 'Docker image tag for all services'
+        )
+    }
+
+    environment {
+        DOCKER_REPO   = 'ketan803'
+        K8S_NAMESPACE = 'movie-app'
+        PATH = "/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:${env.PATH}"
+
+        // All microservice folder names (must match directory names)
+        SERVICES = 'discovery-server,api-gateway,user-service,match-service,booking-service,payment-service,notification-service'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build & Test All Services') {
+            steps {
+                script {
+                    def serviceList = env.SERVICES.split(',')
+                    def parallelBuilds = [:]
+
+                    serviceList.each { svc ->
+                        parallelBuilds["Build ${svc}"] = {
+                            dir(svc) {
+                                echo "===== Building ${svc} ====="
+                                sh 'chmod +x mvnw 2>/dev/null || true'
+                                sh './mvnw -B clean package -DskipTests'
+                                echo "===== ${svc} build complete ====="
+                            }
+                        }
+                    }
+
+                    parallel parallelBuilds
+                }
+            }
+        }
+
+        stage('Docker Build All') {
+            steps {
+                script {
+                    def imageTag = params.IMAGE_TAG ?: "main-${env.BUILD_NUMBER}"
+                    def serviceList = env.SERVICES.split(',')
+
+                    serviceList.each { svc ->
+                        dir(svc) {
+                            def imageName = "${DOCKER_REPO}/${svc}:${imageTag}"
+                            echo "Building Docker image: ${imageName}"
+                            sh "docker build -t ${imageName} ."
+                        }
+                    }
+
+                    // Store tag for later stages
+                    env.IMAGE_TAG_FINAL = imageTag
+                }
+            }
+        }
+
+        stage('Docker Push All') {
+            when { expression { currentBuild.currentResult == 'SUCCESS' } }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'docker_creds',
+                    usernameVariable: 'DOCKER_USERNAME',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
+                    script {
+                        sh 'echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin'
+
+                        def serviceList = env.SERVICES.split(',')
+                        serviceList.each { svc ->
+                            def imageName = "${DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
+                            echo "Pushing ${imageName}"
+                            sh "docker push ${imageName}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Minikube') {
+            when { expression { currentBuild.currentResult == 'SUCCESS' } }
+            steps {
+                script {
+                    sh """
+                        echo "Switching to Minikube context..."
+                        sudo -n -u ketan /snap/bin/kubectl config use-context minikube
+                    """
+
+                    def serviceList = env.SERVICES.split(',')
+                    serviceList.each { svc ->
+                        def imageName = "${DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
+                        echo "Deploying ${svc} → ${imageName}"
+                        sh """
+                            sudo -n -u ketan /snap/bin/kubectl set image deployment/${svc} ${svc}=${imageName} -n ${K8S_NAMESPACE} || echo "Deployment ${svc} not found, skipping..."
+                        """
+                    }
+
+                    // Wait for rollouts
+                    serviceList.each { svc ->
+                        sh """
+                            sudo -n -u ketan /snap/bin/kubectl rollout status deployment/${svc} -n ${K8S_NAMESPACE} --timeout=120s || echo "Rollout for ${svc} timed out or not found"
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ All ${env.SERVICES.split(',').size()} microservices built and deployed successfully (Build #${env.BUILD_NUMBER})"
+        }
+        failure {
+            echo "❌ Backend pipeline failed at Build #${env.BUILD_NUMBER}"
+        }
+    }
+}

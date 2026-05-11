@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: match-frontend
+  namespace: match-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: match-frontend
+  template:
+    metadata:
+      labels:
+        app: match-frontend
+    spec:
+      containers:
+        - name: match-frontend
+          image: transyltoonia/match-frontend:5
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80

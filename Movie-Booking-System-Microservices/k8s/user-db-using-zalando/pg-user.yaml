@@ -1,0 +1,16 @@
+apiVersion: "acid.zalan.do/v1"
+kind: postgresql
+metadata:
+  name: user-pg
+  namespace: movie-app
+spec:
+  teamId: "user"
+  volume:
+    size: 1Gi
+  numberOfInstances: 2
+  users:
+    user_service: []     # DB user
+  databases:
+    user_db: user_service
+  postgresql:
+    version: "15"

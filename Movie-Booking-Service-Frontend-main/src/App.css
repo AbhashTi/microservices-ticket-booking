@@ -1,0 +1,255 @@
+/* ========== HOTSTAR / STADIUMPASS THEME — APP CSS ========== */
+
+/* ── Core Animations ─────────────────────────────── */
+@keyframes spin        { to { transform: rotate(360deg); } }
+@keyframes fadeInUp    { from { opacity:0; transform:translateY(24px); } to { opacity:1; transform:translateY(0); } }
+@keyframes fadeIn      { from { opacity:0; } to { opacity:1; } }
+@keyframes shimmer     { 0% { background-position:-200% 0; } 100% { background-position:200% 0; } }
+@keyframes pulseGlow   { 0%,100% { box-shadow:0 0 20px rgba(31,128,224,.3); } 50% { box-shadow:0 0 40px rgba(31,128,224,.6); } }
+@keyframes slideDown   { from { opacity:0; transform:translateY(-10px); } to { opacity:1; transform:translateY(0); } }
+@keyframes gradientMove{ 0% { background-position:0% 50%; } 50% { background-position:100% 50%; } 100% { background-position:0% 50%; } }
+
+/* ── New Animations ─────────────────────────────── */
+@keyframes kenBurns    { 0% { transform:scale(1); } 50% { transform:scale(1.08); } 100% { transform:scale(1); } }
+@keyframes float       { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-12px); } }
+@keyframes pulse       { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+@keyframes slideInLeft { from { opacity:0; transform:translateX(-30px); } to { opacity:1; transform:translateX(0); } }
+@keyframes slideInRight{ from { opacity:0; transform:translateX(30px); } to { opacity:1; transform:translateX(0); } }
+@keyframes scaleIn     { from { opacity:0; transform:scale(.9); } to { opacity:1; transform:scale(1); } }
+@keyframes glow        { 0%,100% { filter:drop-shadow(0 0 6px rgba(31,128,224,.4)); } 50% { filter:drop-shadow(0 0 18px rgba(31,128,224,.8)); } }
+@keyframes ticketReveal{ from { opacity:0; transform:translateY(30px) rotateX(15deg); } to { opacity:1; transform:translateY(0) rotateX(0); } }
+@keyframes borderPulse { 0%,100% { border-color:rgba(31,128,224,.3); } 50% { border-color:rgba(31,128,224,.7); } }
+@keyframes dotBounce {
+  0%,80%,100% { transform:scale(0); }
+  40% { transform:scale(1); }
+}
+@keyframes stadiumWave {
+  0%   { transform:translateY(0) scaleY(1); }
+  25%  { transform:translateY(-6px) scaleY(1.1); }
+  50%  { transform:translateY(0) scaleY(1); }
+  75%  { transform:translateY(3px) scaleY(.95); }
+  100% { transform:translateY(0) scaleY(1); }
+}
+@keyframes confetti {
+  0%   { transform:translateY(0) rotate(0); opacity:1; }
+  100% { transform:translateY(-120px) rotate(720deg); opacity:0; }
+}
+
+/* ── Hotstar Content Rail ─────────────────────────── */
+.hotstar-rail {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 12px;
+  scrollbar-width: none;
+}
+.hotstar-rail::-webkit-scrollbar { display: none; }
+.hotstar-rail > * { scroll-snap-align: start; flex-shrink: 0; }
+
+.category-tab {
+  padding: 8px 22px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: transparent;
+  color: #a0a0a0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 200ms ease;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.category-tab:hover {
+  border-color: rgba(31,128,224,.4);
+  color: #fff;
+  background: rgba(31,128,224,.08);
+}
+.category-tab.active {
+  border: none;
+  background: linear-gradient(135deg, #1f80e0, #0066cc);
+  color: #fff;
+}
+
+/* ── Stadium Atmosphere ─────────────────────────── */
+.stadium-bg-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(31,128,224,.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* ── MUI Overrides ─────────────────────────────── */
+.MuiPaper-root    { background-color:#1a1028 !important; color:#e8e8e8 !important; }
+.MuiAppBar-root   { background:transparent !important; }
+
+/* ── Seat Layout ────────────────────────────────── */
+.screen-bar {
+  background: linear-gradient(180deg, #1f80e0, #0052a3);
+  border-radius: 12px;
+  padding: 14px 0;
+  box-shadow: 0 8px 30px rgba(31,128,224,.25);
+  transition: transform 240ms ease;
+}
+.screen-bar:hover { transform: translateY(-2px); }
+
+.seat {
+  transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease, border-color 180ms ease;
+  will-change: transform, box-shadow, background-color;
+}
+.seat:hover          { transform: translateY(-4px); box-shadow: 0 8px 20px rgba(31,128,224,.15); }
+.seat.sold           { opacity: .35; transform: none !important; cursor: not-allowed !important; }
+.seat.selected       { transform: translateY(-6px) scale(1.05); box-shadow: 0 14px 30px rgba(31,128,224,.25); }
+.seat.premium        { border-color: #e040fb !important; }
+.seat.regular        { border-color: #1f80e0 !important; }
+
+.proceed-btn {
+  background: linear-gradient(90deg, #1f80e0, #0052a3) !important;
+  color: #fff !important;
+  text-transform: none !important;
+  box-shadow: 0 10px 30px rgba(31,128,224,.25) !important;
+  font-weight: 700 !important;
+  border-radius: 8px !important;
+}
+.proceed-btn.Mui-disabled, .proceed-btn[disabled] {
+  background: #2d1f4e !important;
+  color: #666 !important;
+  box-shadow: none !important;
+}
+
+/* ── Dialog ─────────────────────────────────────── */
+.MuiDialog-paper {
+  border-radius: 16px !important;
+  max-width: 760px !important;
+  width: calc(100% - 48px) !important;
+  padding: 0 !important;
+  background: #1a1028 !important;
+  border: 1px solid rgba(255,255,255,.08) !important;
+  animation: slideDown 220ms ease both;
+}
+
+.booking-summary           { display:flex; gap:18px; align-items:flex-start; }
+.booking-summary .left,
+.booking-summary .right     { flex:1; }
+.booking-summary .right     { max-width:220px; }
+.booking-summary .seats-list{ display:flex; flex-wrap:wrap; gap:8px; }
+
+.seat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #2d1f4e;
+  color: #e8e8e8;
+  font-weight: 600;
+}
+.seat-pill.premium { background: rgba(224,64,251,.15); color: #e040fb; }
+.seat-pill.regular { background: rgba(31,128,224,.15); color: #1f80e0; }
+
+.MuiDialogActions-root {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px 24px 18px 24px;
+}
+
+/* ── Ticket / QR ───────────────────────────────── */
+.ticket-pass {
+  position: relative;
+  background: linear-gradient(135deg, #1a1028, #2d1f4e);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 16px;
+  overflow: hidden;
+  animation: ticketReveal 500ms ease both;
+}
+.ticket-pass::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #0f0617;
+  transform: translateY(-50%);
+}
+.ticket-pass::after {
+  content: '';
+  position: absolute;
+  right: -10px;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #0f0617;
+  transform: translateY(-50%);
+}
+
+.ticket-perforation {
+  border: none;
+  border-top: 2px dashed rgba(255,255,255,.1);
+  margin: 20px 20px;
+}
+
+.qr-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.3);
+}
+
+/* ── Payment Gateway ───────────────────────────── */
+.payment-method-card {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1.5px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.02);
+  cursor: pointer;
+  transition: all 200ms ease;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.payment-method-card:hover {
+  border-color: rgba(31,128,224,.3);
+  background: rgba(31,128,224,.04);
+}
+.payment-method-card.selected {
+  border-color: #1f80e0;
+  background: rgba(31,128,224,.08);
+  box-shadow: 0 0 20px rgba(31,128,224,.15);
+}
+
+.processing-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  font-size: 14px;
+  color: #888;
+  transition: all 300ms ease;
+}
+.processing-step.active {
+  color: #1f80e0;
+  font-weight: 600;
+}
+.processing-step.done {
+  color: #00c853;
+}
+
+/* ── Responsive ─────────────────────────────────── */
+@media (max-width: 720px) {
+  .booking-summary             { flex-direction: column; }
+  .booking-summary .right      { max-width: none; }
+  .MuiDialog-paper             { width: calc(100% - 24px) !important; }
+}
+
+/* ── Toast ──────────────────────────────────────── */
+.Toastify__toast         { background:#1a1028 !important; color:#e8e8e8 !important; border:1px solid rgba(255,255,255,.08) !important; border-radius:12px !important; }
+.Toastify__close-button  { color:#888 !important; }
+.Toastify__progress-bar  { background:linear-gradient(90deg,#1f80e0,#00e5ff) !important; }
