@@ -42,4 +42,4 @@ public class MatchSession {
     void touch() {
         updatedAt = Instant.now();
     }
-}`
+}
