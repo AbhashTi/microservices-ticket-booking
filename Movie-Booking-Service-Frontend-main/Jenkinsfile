@@ -40,14 +40,7 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
-                sh '''
-                    if ! command -v node &> /dev/null; then
-                        echo "Installing Node.js 18..."
-                        curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-                        sudo apt-get install -y nodejs
-                    fi
-                    node -v && npm -v
-                '''
+                sh 'node -v && npm -v'
                 dir("${env.FRONTEND_DIR}") {
                     sh 'npm install'
                 }
