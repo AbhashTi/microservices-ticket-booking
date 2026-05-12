@@ -42,19 +42,21 @@ pipeline {
             steps {
                 script {
                     def serviceList = env.SERVICES.split(',')
-                    def parallelBuilds = [:]
 
                     serviceList.each { svc ->
-                        parallelBuilds["Build: ${svc}"] = {
-                            dir("${env.BACKEND_DIR}/${svc}") {
-                                echo "===== Building ${svc} ====="
-                                sh 'chmod +x mvnw 2>/dev/null || true'
-                                sh './mvnw -B clean package -DskipTests'
-                                echo "===== ${svc} done ====="
-                            }
+                        dir("${env.BACKEND_DIR}/${svc}") {
+                            echo "===== Building ${svc} ====="
+                            sh '''
+                                chmod +x mvnw 2>/dev/null || true
+                                if [ -f ./mvnw ]; then
+                                    ./mvnw -B clean package -DskipTests -q
+                                else
+                                    mvn -B clean package -DskipTests -q
+                                fi
+                            '''
+                            echo "===== ${svc} DONE ====="
                         }
                     }
-                    parallel parallelBuilds
                 }
             }
         }
