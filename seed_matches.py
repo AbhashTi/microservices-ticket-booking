@@ -2,7 +2,7 @@ import requests
 import json
 from datetime import datetime, timedelta
 
-API_BASE = "http://172.16.180.127:8085"
+API_BASE = "http://localhost:8085"
 
 def get_token():
     # Try to signup first
