@@ -21,7 +21,7 @@ pipeline {
     }
 
     environment {
-        DOCKER_REPO   = 'ketan803'
+        DOCKER_REPO   = 'abhashti'
         K8S_NAMESPACE = 'movie-app'
         BACKEND_DIR   = "${WORKSPACE}/Movie-Booking-System-Microservices"
         KUBECTL       = '/snap/bin/kubectl'
@@ -81,7 +81,7 @@ pipeline {
             when { expression { currentBuild.currentResult == 'SUCCESS' } }
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'docker_creds',
+                    credentialsId: 'dockerhub-creds',
                     usernameVariable: 'DOCKER_USERNAME',
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {

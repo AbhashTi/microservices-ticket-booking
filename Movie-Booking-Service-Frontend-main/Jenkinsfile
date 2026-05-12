@@ -21,16 +21,14 @@ pipeline {
 
     environment {
         SERVICE_NAME  = 'match-frontend'
-        DOCKER_REPO   = 'ketan803'
+        DOCKER_REPO   = 'abhashti'
         K8S_NAMESPACE = 'movie-app'
         FRONTEND_DIR  = "${WORKSPACE}/Movie-Booking-Service-Frontend-main"
         KUBECTL       = '/snap/bin/kubectl'
         NODE_VERSION  = '18'
     }
 
-    tools {
-        nodejs 'Node18'
-    }
+    // Node.js installed inline in 'Install Dependencies' stage
 
     stages {
 
@@ -42,8 +40,15 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
+                sh '''
+                    if ! command -v node &> /dev/null; then
+                        echo "Installing Node.js 18..."
+                        curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+                        sudo apt-get install -y nodejs
+                    fi
+                    node -v && npm -v
+                '''
                 dir("${env.FRONTEND_DIR}") {
-                    sh 'node -v && npm -v'
                     sh 'npm install'
                 }
             }
@@ -75,7 +80,7 @@ pipeline {
             when { expression { currentBuild.currentResult == 'SUCCESS' } }
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'docker_creds',
+                    credentialsId: 'dockerhub-creds',
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
