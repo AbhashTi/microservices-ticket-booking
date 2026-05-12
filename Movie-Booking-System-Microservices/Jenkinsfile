@@ -23,7 +23,7 @@ pipeline {
     environment {
         DOCKER_REPO   = 'ketan803'
         K8S_NAMESPACE = 'movie-app'
-        PROJECT_DIR   = '/home/iiitb/Movie-Booking-System-Microservices'
+        BACKEND_DIR   = "${WORKSPACE}/Movie-Booking-System-Microservices"
         KUBECTL       = '/snap/bin/kubectl'
 
         // All microservice folder names (match directory names exactly)
@@ -46,7 +46,7 @@ pipeline {
 
                     serviceList.each { svc ->
                         parallelBuilds["Build: ${svc}"] = {
-                            dir("${env.PROJECT_DIR}/${svc}") {
+                            dir("${env.BACKEND_DIR}/${svc}") {
                                 echo "===== Building ${svc} ====="
                                 sh 'chmod +x mvnw 2>/dev/null || true'
                                 sh './mvnw -B clean package -DskipTests'
@@ -67,7 +67,7 @@ pipeline {
 
                     def serviceList = env.SERVICES.split(',')
                     serviceList.each { svc ->
-                        dir("${env.PROJECT_DIR}/${svc}") {
+                        dir("${env.BACKEND_DIR}/${svc}") {
                             def imageName = "${env.DOCKER_REPO}/${svc}:${imageTag}"
                             echo "Building Docker image: ${imageName}"
                             sh "docker build -t ${imageName} ."
@@ -102,7 +102,7 @@ pipeline {
             when { expression { currentBuild.currentResult == 'SUCCESS' } }
             steps {
                 echo "Restarting all services via docker-compose with new images..."
-                dir("${env.PROJECT_DIR}") {
+                dir("${env.BACKEND_DIR}") {
                     sh '''
                         docker compose down --remove-orphans || true
                         docker compose up -d --build
@@ -147,13 +147,13 @@ pipeline {
 
     post {
         success {
-            echo "✅ Backend pipeline SUCCESS (Build #${env.BUILD_NUMBER})"
-            echo "🌐 App running at: http://172.16.180.127:80"
-            echo "🔗 API Gateway at: http://172.16.180.127:8085"
-            echo "📋 Eureka at:      http://172.16.180.127:8761"
+            echo "Backend pipeline SUCCESS (Build #${env.BUILD_NUMBER})"
+            echo "App running at: http://172.16.180.127:80"
+            echo "API Gateway at: http://172.16.180.127:8085"
+            echo "Eureka at:      http://172.16.180.127:8761"
         }
         failure {
-            echo "❌ Backend pipeline FAILED at Build #${env.BUILD_NUMBER}"
+            echo "Backend pipeline FAILED at Build #${env.BUILD_NUMBER}"
         }
     }
 }
