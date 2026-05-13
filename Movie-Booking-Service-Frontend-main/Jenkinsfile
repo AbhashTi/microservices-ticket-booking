@@ -39,22 +39,40 @@ pipeline {
         }
 
         stage('Install Dependencies') {
-            steps {
-                sh 'node -v && npm -v'
-                dir("${env.FRONTEND_DIR}") {
-                    sh 'npm install'
-                }
-            }
+    steps {
+        sh '''
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm install 18
+            nvm use 18
+            node -v
+            npm -v
+        '''
+        dir("${env.FRONTEND_DIR}") {
+            sh '''
+                export NVM_DIR="$HOME/.nvm"
+                [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+                nvm use 18
+                rm -rf node_modules package-lock.json
+                npm install --legacy-peer-deps
+            '''
         }
+    }
+}
 
         stage('Build React App') {
-            steps {
-                dir("${env.FRONTEND_DIR}") {
-                    sh 'CI=false npm run build'
-                    echo "React build complete"
-                }
-            }
+    steps {
+        dir("${env.FRONTEND_DIR}") {
+            sh '''
+                export NVM_DIR="$HOME/.nvm"
+                [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+                nvm use 18
+                CI=false npm run build
+            '''
+            echo "React build complete"
         }
+    }
+}
 
         stage('Docker Build') {
             steps {
