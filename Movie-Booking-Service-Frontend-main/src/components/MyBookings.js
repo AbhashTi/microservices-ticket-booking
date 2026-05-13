@@ -13,7 +13,7 @@ export default function MyBookings() {
   const [createdMap, setCreatedMap] = useState({});
   const [showInfoMap, setShowInfoMap] = useState({});
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
-  const [ticketModal, setTicketModal] = useState(null); // booking object or null
+  const [ticketModal, setTicketModal] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -32,7 +32,11 @@ export default function MyBookings() {
       setError(null);
       const API = process.env.REACT_APP_API_URL || "";
       const token = getToken();
-      const res = await fetch(`${API}/bookings/my`, { method: "GET", headers: { "Content-Type": "application/json", "Authorization": token } });
+      // FIXED: use Bearer prefix
+      const res = await fetch(`${API}/bookings/my`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json", "Authorization": token }
+      });
       if (!res.ok) { setError("Failed to load bookings"); setLoading(false); return; }
       const data = await res.json();
       const updatedMap = { ...createdMap };
@@ -51,19 +55,23 @@ export default function MyBookings() {
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
 
   useEffect(() => {
-    const uniqueShowIds = Array.from(new Set(bookings.map(b => b.showId))).filter(id => id != null);
-    uniqueShowIds.forEach(showId => {
-      if (showInfoMap[showId]) return;
+    // Use sessionId (what booking-service stores) rather than showId
+    const uniqueSessionIds = Array.from(new Set(bookings.map(b => b.sessionId))).filter(id => id != null);
+    uniqueSessionIds.forEach(sessionId => {
+      if (showInfoMap[sessionId]) return;
       (async () => {
         try {
           const API = process.env.REACT_APP_API_URL || "";
           const token = getToken();
-          const res = await fetch(`${API}/matches/shows/${showId}`, { headers: { "Authorization": token } });
+          // FIXED: use Bearer prefix, fetch from /sessions/:id
+          const res = await fetch(`${API}/sessions/${sessionId}`, {
+            headers: { "Authorization": token }
+          });
           if (!res.ok) return;
           const ct = res.headers.get("content-type") || "";
           if (!ct.includes("application/json")) return;
-          const show = await res.json();
-          setShowInfoMap(prev => ({ ...prev, [showId]: show }));
+          const session = await res.json();
+          setShowInfoMap(prev => ({ ...prev, [sessionId]: session }));
         } catch {}
       })();
     });
@@ -105,18 +113,24 @@ export default function MyBookings() {
     try {
       const API = process.env.REACT_APP_API_URL || "";
       const token = getToken();
-      const res = await fetch(`${API}/bookings/${bookingId}/cancel`, { method: "PUT", headers: { "Content-Type": "application/json", "Authorization": token } });
+      // FIXED: Bearer prefix
+      const res = await fetch(`${API}/bookings/${bookingId}/cancel`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "Authorization": token }
+      });
       if (!res.ok) { alert("Failed to cancel."); return; }
       await loadBookings();
     } catch { alert("Error cancelling."); }
   };
 
   const goToPayment = (b) => {
-    const showInfo = showInfoMap[b.showId] || {};
-    const auditorium = showInfo.auditorium || showInfo.auditoriumName || showInfo.theatre || '';
+    const sessionInfo = showInfoMap[b.sessionId] || {};
+    const stadium = sessionInfo.stadium || sessionInfo.stadiumName || '';
     const labels = Array.isArray(b.seats) ? b.seats.map(s => buildSeatLabel(s)) : [];
-    navigate(`/bookmyshow/payment/${encodeURIComponent(auditorium)}/${encodeURIComponent(b.showId)}/${encodeURIComponent(labels.join(','))}/${encodeURIComponent(b.totalAmount ?? 0)}`,
-      { state: { labels, bookingId: b.id, booking: b } });
+    navigate(
+      `/bookmyshow/payment/${encodeURIComponent(stadium)}/${encodeURIComponent(b.sessionId)}/${encodeURIComponent(labels.join(','))}/${encodeURIComponent(b.totalAmount ?? 0)}`,
+      { state: { labels, bookingId: b.id, booking: b } }
+    );
   };
 
   const buildSeatLabel = (seat) => {
@@ -132,7 +146,6 @@ export default function MyBookings() {
     <div style={{ minHeight: '100vh', background: '#0f0617' }}>
       <NavBar />
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px 60px' }}>
-        {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 800, color: '#fff', margin: '0 0 4px 0' }}>My Bookings</h1>
@@ -164,24 +177,24 @@ export default function MyBookings() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {bookings.map(b => {
               const countdown = b.status === "PENDING_PAYMENT" ? formatCountdown(b.id) : null;
-              const showInfo = showInfoMap[b.showId] || {};
-              const movieTitle = showInfo.movieTitle || showInfo.movieName || showInfo.title || "Match";
-              const showTime = formatDateTime(showInfo.startTime);
-              const auditorium = showInfo.auditorium || showInfo.auditoriumName;
+              const sessionInfo = showInfoMap[b.sessionId] || {};
+              const movieTitle = sessionInfo.movieTitle || b.sessionId ? `Session #${b.sessionId}` : "Match";
+              const showTime = formatDateTime(sessionInfo.startTime);
+              const stadium = sessionInfo.stadium || sessionInfo.stadiumName;
               const sc = statusConfig[b.status] || statusConfig.CANCELLED;
 
               return (
                 <div key={b.id} style={{
                   padding: 20, borderRadius: 12, background: '#1a1028',
                   border: '1px solid rgba(255,255,255,0.06)', borderLeft: `4px solid ${sc.accent}`,
-                  transition: 'all 200ms', animation: 'fadeInUp 300ms ease both',
+                  transition: 'all 200ms',
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
                     <div style={{ flex: 1, minWidth: 200 }}>
                       <div style={{ fontSize: 11, color: '#666', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Booking #{b.id}</div>
                       <h3 style={{ margin: '0 0 8px 0', fontSize: 18, fontWeight: 800, color: '#fff' }}>{movieTitle}</h3>
                       {showTime && <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>🕐 {showTime}</div>}
-                      {auditorium && <div style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>🏟️ {auditorium}</div>}
+                      {stadium && <div style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>🏟️ {stadium}</div>}
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                         <span style={{ padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}>{sc.label}</span>
@@ -189,7 +202,7 @@ export default function MyBookings() {
                       </div>
 
                       <div style={{ fontSize: 15, fontWeight: 700, color: '#1f80e0' }}>₹{b.totalAmount}</div>
-                      {countdown && <div style={{ fontSize: 13, color: '#ffd54a', fontWeight: 600, marginTop: 6 }}>⏱️ Time left: {countdown}</div>}
+                      {countdown && <div style={{ fontSize: 13, color: '#ffd54a', fontWeight: 600, marginTop: 6 }}>⏱️ Seats held for: {countdown}</div>}
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 200 }}>
@@ -201,7 +214,6 @@ export default function MyBookings() {
                       </div>
 
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 'auto' }}>
-                        {/* View Ticket button for CONFIRMED */}
                         {b.status === "CONFIRMED" && (
                           <button onClick={() => setTicketModal(b)}
                             style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: 'linear-gradient(135deg, #00c853, #009624)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 4px 12px rgba(0,200,83,0.3)', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -234,11 +246,10 @@ export default function MyBookings() {
         )}
       </div>
 
-      {/* ── Ticket Modal ── */}
       {ticketModal && (
         <TicketModal
           booking={ticketModal}
-          showInfo={showInfoMap[ticketModal.showId] || {}}
+          showInfo={showInfoMap[ticketModal.sessionId] || {}}
           buildSeatLabel={buildSeatLabel}
           onClose={() => setTicketModal(null)}
         />
@@ -251,25 +262,26 @@ export default function MyBookings() {
 function TicketModal({ booking, showInfo, buildSeatLabel, onClose }) {
   const ticketRef = useRef(null);
   const b = booking;
-  const movieTitle = showInfo.movieTitle || showInfo.movieName || showInfo.title || "Match";
-  const auditorium = showInfo.auditorium || showInfo.auditoriumName || "Stadium";
-  const showTime = showInfo.startTime ? new Date(showInfo.startTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  const movieTitle = showInfo.movieTitle || showInfo.title || `Match (Session #${b.sessionId})`;
+  const stadium = showInfo.stadium || showInfo.stadiumName || "Stadium";
+  const showTime = showInfo.startTime
+    ? new Date(showInfo.startTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '';
 
-  // QR Code URL using a free API
-  const qrData = `STADIUMPASS-TICKET|ID:${b.id}|SHOW:${b.showId}|AMT:${b.totalAmount}|SEATS:${b.seats?.length || 0}`;
+  const qrData = `STADIUMPASS-TICKET|ID:${b.id}|SESSION:${b.sessionId}|AMT:${b.totalAmount}|SEATS:${b.seats?.length || 0}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrData)}&bgcolor=ffffff&color=1a1028`;
 
   const downloadTicket = () => {
-    // Create a simple text-based ticket download
     const ticketText = [
       '═══════════════════════════════════',
       '       🏏 STADIUMPASS E-TICKET       ',
       '═══════════════════════════════════',
       '',
       `Match: ${movieTitle}`,
-      `Venue: ${auditorium}`,
+      `Venue: ${stadium}`,
       `Date:  ${showTime}`,
       `Booking ID: #${b.id}`,
+      `Session ID: #${b.sessionId}`,
       '',
       `Seats: ${b.seats?.map(s => buildSeatLabel(s)).join(', ') || 'N/A'}`,
       `Total: ₹${b.totalAmount}`,
@@ -293,9 +305,8 @@ function TicketModal({ booking, showInfo, buildSeatLabel, onClose }) {
     <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
       onClick={onClose}>
       <div onClick={e => e.stopPropagation()} ref={ticketRef}
-        className="ticket-pass" style={{ width: '100%', maxWidth: 420 }}>
+        className="ticket-pass" style={{ width: '100%', maxWidth: 420, borderRadius: 16, overflow: 'hidden', background: '#1a1028', border: '1px solid rgba(255,255,255,0.08)' }}>
 
-        {/* Ticket Header */}
         <div style={{ padding: '24px 28px 16px', background: 'linear-gradient(135deg, #1f80e0, #0052a3)', position: 'relative' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -310,16 +321,11 @@ function TicketModal({ booking, showInfo, buildSeatLabel, onClose }) {
           <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>E-Ticket • Booking #{b.id}</div>
         </div>
 
-        {/* Perforation */}
-        <hr className="ticket-perforation" />
-
-        {/* Ticket Body */}
-        <div style={{ padding: '0 28px 20px' }}>
-          {/* Match Details Grid */}
+        <div style={{ padding: '20px 28px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
             <div>
               <div style={{ fontSize: 10, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Venue</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>🏟️ {auditorium}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>🏟️ {stadium}</div>
             </div>
             <div>
               <div style={{ fontSize: 10, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Date & Time</div>
@@ -341,21 +347,14 @@ function TicketModal({ booking, showInfo, buildSeatLabel, onClose }) {
             </div>
           </div>
 
-          {/* Perforation */}
-          <hr className="ticket-perforation" />
-
-          {/* QR Code */}
-          <div style={{ textAlign: 'center', padding: '16px 0' }}>
-            <div className="qr-container" style={{ display: 'inline-flex', margin: '0 auto' }}>
-              <img src={qrUrl} alt="QR Code" style={{ width: 160, height: 160 }}
-                onError={e => { e.target.style.display = 'none'; }} />
-            </div>
+          <div style={{ borderTop: '1px dashed rgba(255,255,255,0.1)', paddingTop: 16, textAlign: 'center' }}>
+            <img src={qrUrl} alt="QR Code" style={{ width: 160, height: 160 }}
+              onError={e => { e.target.style.display = 'none'; }} />
             <p style={{ fontSize: 11, color: '#666', marginTop: 12 }}>Scan this QR code at the stadium entrance</p>
-            <p style={{ fontSize: 10, color: '#444', marginTop: 4 }}>Booking ID: {b.id} • {b.seats?.length || 0} seat(s)</p>
+            <p style={{ fontSize: 10, color: '#444', marginTop: 4 }}>Booking #{b.id} • {b.seats?.length || 0} seat(s)</p>
           </div>
         </div>
 
-        {/* Ticket Footer */}
         <div style={{ padding: '16px 28px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: 10, justifyContent: 'center' }}>
           <button onClick={downloadTicket}
             style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: 'linear-gradient(135deg, #1f80e0, #0066cc)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 4px 15px rgba(31,128,224,0.3)', display: 'flex', alignItems: 'center', gap: 6 }}>

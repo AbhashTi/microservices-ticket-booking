@@ -30,8 +30,11 @@ function Payment() {
   const [processingStep, setProcessingStep] = useState(-1)
   const [promoCode, setPromoCode] = useState('')
 
+  // bookingId MUST come from route state set by SeatLayout after /bookings/create
   const bookingIdFromState = location?.state?.bookingId || location?.state?.booking?.id || null
-  const amountFromState = location?.state?.booking?.totalAmount != null ? Number(location.state.booking.totalAmount) : Number(total)
+  const amountFromState = location?.state?.booking?.totalAmount != null
+    ? Number(location.state.booking.totalAmount)
+    : Number(total)
 
   useEffect(() => {
     if (!showId) return
@@ -40,16 +43,22 @@ function Payment() {
       try {
         const API = process.env.REACT_APP_API_URL || "";
         const token = getToken();
-        const res = await fetch(`${API}/matches/shows/${showId}`, { headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" } });
+        // Try to fetch session info for display
+        const res = await fetch(`${API}/sessions/${showId}`, {
+          headers: { "Authorization": token, "Content-Type": "application/json" }
+        });
         if (!res.ok) return;
         const ct = res.headers.get('content-type') || '';
         if (!ct.includes('application/json')) return;
         const s = await res.json();
         if (!mounted) return;
         setShow(s);
-        const movieId = s.movieId ?? s.movie_id ?? s.match
+        // Fetch match info for display
+        const movieId = s.matchId ?? s.movieId ?? s.movie_id ?? s.match
         if (movieId) {
-          const mres = await fetch(`${API}/matches/${movieId}`, { headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" } });
+          const mres = await fetch(`${API}/matches/${movieId}`, {
+            headers: { "Authorization": token, "Content-Type": "application/json" }
+          });
           if (mres && mres.ok) {
             const mct = mres.headers.get('content-type') || ''
             if (mct.includes('application/json')) {
@@ -66,7 +75,11 @@ function Payment() {
   }, [showId])
 
   const movieTicket = async () => {
-    if (!bookingIdFromState) { toast.error('Missing booking information. Please try booking again.'); return; }
+    // Guard: must have a bookingId from the previous /bookings/create call
+    if (!bookingIdFromState) {
+      toast.error('Missing booking information. Please go back and select seats again.');
+      return;
+    }
     try {
       setLoading(true)
       setProcessingStep(0)
@@ -77,17 +90,39 @@ function Payment() {
         setProcessingStep(i);
       }
 
-      const payload = { bookingId: bookingIdFromState, amount: amountFromState }
       const API = process.env.REACT_APP_API_URL || "";
       const token = getToken();
-      const res = await fetch(`${API}/payment/pay`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      if (!res.ok) { toast.error('Failed to start payment'); setLoading(false); setProcessingStep(-1); return; }
-      await res.text()
-      toast.success('🎉 Payment successful! Booking confirmed.')
+
+      // Step 1: Call payment service — it publishes PaymentSuccessEvent via RabbitMQ
+      // BookingService.handlePaymentEvent() consumes that event and calls confirmPayment()
+      // which moves seats from Redis lock → booked_seats DB table permanently
+      const payload = { bookingId: bookingIdFromState, amount: amountFromState }
+      const res = await fetch(`${API}/payment/pay`, {
+        method: 'POST',
+        headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (!res.ok) {
+        toast.error('Payment failed. Please try again.');
+        setLoading(false);
+        setProcessingStep(-1);
+        return;
+      }
+
+      // Payment service responds immediately with "Payment started" while RabbitMQ
+      // event fires async to confirm the booking. Give it a moment then navigate.
+      await new Promise(r => setTimeout(r, 1500));
+
+      toast.success('🎉 Payment successful! Your ticket is confirmed.')
       setLoading(false)
       setProcessingStep(-1)
       setTimeout(() => navigate('/users/bookings'), 1500)
-    } catch (err) { console.error(err); setLoading(false); setProcessingStep(-1); toast.error('Payment error') }
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+      setProcessingStep(-1);
+      toast.error('Payment error. Please try again.')
+    }
   }
 
   const displaySeatLabels = (() => {
@@ -145,7 +180,6 @@ function Payment() {
               </div>
 
               <div style={{ padding: 20 }}>
-                {/* Payment Methods */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
                   {PAYMENT_METHODS.map(m => (
                     <div key={m.key}
@@ -163,14 +197,12 @@ function Payment() {
                   ))}
                 </div>
 
-                {/* Promo Code */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
                   <input value={promoCode} onChange={e => setPromoCode(e.target.value)} placeholder="Enter promo code"
                     style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: '#fff', fontSize: 13, outline: 'none', fontFamily: 'inherit' }} />
                   <button style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid rgba(31,128,224,0.3)', background: 'rgba(31,128,224,0.08)', color: '#1f80e0', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Apply</button>
                 </div>
 
-                {/* Trust Badges */}
                 <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
                   {[
                     { icon: '🔒', label: '100% Secure' },
@@ -191,20 +223,18 @@ function Payment() {
             <div style={{ borderRadius: 16, background: '#1a1028', border: '1px solid rgba(255,255,255,0.08)', padding: 20, position: 'sticky', top: 80 }}>
               <h3 style={{ fontSize: 16, fontWeight: 800, color: '#fff', margin: '0 0 16px 0' }}>🧾 Order Summary</h3>
 
-              {/* Match Info */}
               <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
                 <img src={match?.posterUrl || 'https://images.unsplash.com/photo-1531415074968-036ba1b575da?w=200'} alt="poster"
                   style={{ width: 60, height: 85, objectFit: 'cover', borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)' }} />
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>{match?.teams || 'Match'}</div>
                   {show?.startTime && <div style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>🕐 {formatShowTime(show.startTime)}</div>}
-                  <div style={{ fontSize: 12, color: '#888' }}>🏟️ {show?.auditorium || show?.stadium || theaterId || 'Stadium'}</div>
+                  <div style={{ fontSize: 12, color: '#888' }}>🏟️ {show?.stadium || theaterId || 'Stadium'}</div>
                 </div>
               </div>
 
               <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', margin: '12px 0' }} />
 
-              {/* Seats */}
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>Seats ({displaySeatLabels.length})</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
@@ -216,7 +246,6 @@ function Payment() {
 
               <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', margin: '12px 0' }} />
 
-              {/* Price Breakdown */}
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13, color: '#a0a0a0' }}>
                 <span>Subtotal</span><span>₹{amountFromState}</span>
               </div>
@@ -229,13 +258,18 @@ function Payment() {
                 <span style={{ fontSize: 24, fontWeight: 900, color: '#1f80e0' }}>₹{amountFromState}</span>
               </div>
 
-              {/* Action Buttons */}
-              <button onClick={movieTicket} disabled={loading}
+              {!bookingIdFromState && (
+                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,68,68,0.1)', border: '1px solid rgba(255,68,68,0.2)', color: '#ff6b6b', fontSize: 12, marginBottom: 12 }}>
+                  ⚠️ Booking session missing. Please go back and select seats again.
+                </div>
+              )}
+
+              <button onClick={movieTicket} disabled={loading || !bookingIdFromState}
                 style={{
                   width: '100%', padding: '14px', borderRadius: 10, border: 'none',
-                  background: loading ? '#2d1f4e' : 'linear-gradient(135deg, #1f80e0, #0066cc)',
-                  color: '#fff', fontSize: 15, fontWeight: 700, cursor: loading ? 'wait' : 'pointer',
-                  fontFamily: 'inherit', boxShadow: loading ? 'none' : '0 8px 30px rgba(31,128,224,0.3)',
+                  background: (loading || !bookingIdFromState) ? '#2d1f4e' : 'linear-gradient(135deg, #1f80e0, #0066cc)',
+                  color: '#fff', fontSize: 15, fontWeight: 700, cursor: (loading || !bookingIdFromState) ? 'not-allowed' : 'pointer',
+                  fontFamily: 'inherit', boxShadow: (!loading && bookingIdFromState) ? '0 8px 30px rgba(31,128,224,0.3)' : 'none',
                   transition: 'all 300ms', marginBottom: 10,
                 }}>
                 {loading ? '⏳ Processing...' : `💳 Pay ₹${amountFromState}`}

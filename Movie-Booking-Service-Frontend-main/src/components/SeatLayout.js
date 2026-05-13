@@ -31,7 +31,8 @@ const ALL_SEATS = buildSeats();
 
 /* ── Component ───────────────────────────────────── */
 function SeatLayout() {
-  const { id, showId } = useParams();
+  // Route is /bookmyshow/seat-layout/:matchId/:showId
+  const { matchId, showId } = useParams();
   const navigate = useNavigate();
   const [match, setMatch] = useState(null);
   const [session, setSession] = useState(null);
@@ -51,7 +52,7 @@ function SeatLayout() {
     (async () => {
       try {
         // Fetch session details (prices)
-        const sr = await fetch(`${API}/sessions/${showId}`, { headers: { Authorization: `Bearer ${token}` } });
+        const sr = await fetch(`${API}/sessions/${showId}`, { headers: { Authorization: token } });
         if (sr.ok) {
           const s = await sr.json();
           if (!ok) return;
@@ -59,12 +60,15 @@ function SeatLayout() {
           setPriceRegular(s.priceRegular ?? s.price_regular ?? 500);
           setPricePremium(s.pricePremium ?? s.price_premium ?? 1500);
         }
-        // Fetch match details
-        const mr = await fetch(`${API}/matches/${id}`, { headers: { Authorization: `Bearer ${token}` } });
-        if (mr.ok) { const m = await mr.json(); if (ok) setMatch(m); }
-        // Fetch booked seats
+        // Fetch match details — use matchId from route, fall back to session.matchId
+        const resolvedMatchId = matchId || (session && session.matchId);
+        if (resolvedMatchId) {
+          const mr = await fetch(`${API}/matches/${resolvedMatchId}`, { headers: { Authorization: token } });
+          if (mr.ok) { const m = await mr.json(); if (ok) setMatch(m); }
+        }
+        // Fetch booked + locked seats
         try {
-          const br = await fetch(`${API}/bookings/show/${showId}/seats/status`, { headers: { Authorization: `Bearer ${token}` } });
+          const br = await fetch(`${API}/bookings/show/${showId}/seats/status`, { headers: { Authorization: token } });
           if (br.ok) {
             const ct = br.headers.get('content-type') || '';
             if (ct.includes('json')) {
@@ -77,7 +81,7 @@ function SeatLayout() {
       finally { if (ok) setLoading(false); }
     })();
     return () => { ok = false; };
-  }, [showId, id]);
+  }, [showId, matchId]);
 
   const toggle = (seatId) => {
     if (booked.includes(seatId)) return;
@@ -103,7 +107,7 @@ function SeatLayout() {
       const payload = { sessionId: Number(showId), totalAmount: totalPrice, seats };
       const res = await fetch(`${API}/bookings/create`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: token },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
@@ -116,6 +120,7 @@ function SeatLayout() {
       const bk = await res.json();
       setBooking(false);
       const stadium = session?.stadium || match?.stadiumName || '';
+      // Pass bookingId in route state so Payment.js can call /bookings/confirm
       navigate(
         `/bookmyshow/payment/${encodeURIComponent(stadium)}/${showId}/${selected.join(',')}/${totalPrice}`,
         { state: { labels: selectedInfo.map(s => s.label), bookingId: bk.id, booking: bk } }
@@ -159,7 +164,6 @@ function SeatLayout() {
         <div style={{ flex: 1, minWidth: 400 }}>
           <div style={{ background: '#0a0412', borderRadius: 20, border: '1px solid rgba(255,255,255,0.06)', padding: 16, position: 'relative' }}>
             <svg viewBox="0 0 800 600" style={{ width: '100%', display: 'block' }}>
-              {/* Stadium outline glow */}
               <defs>
                 <radialGradient id="glow"><stop offset="0%" stopColor="#1f80e0" stopOpacity="0.05"/><stop offset="100%" stopColor="transparent"/></radialGradient>
                 <filter id="blur"><feGaussianBlur stdDeviation="3"/></filter>
@@ -167,25 +171,21 @@ function SeatLayout() {
               <ellipse cx={CX} cy={CY} rx={320} ry={235} fill="url(#glow)" />
               <ellipse cx={CX} cy={CY} rx={318} ry={233} fill="none" stroke="rgba(31,128,224,0.12)" strokeWidth="1.5" strokeDasharray="4,4" />
 
-              {/* Tier labels */}
               {TIERS.map((t, i) => (
                 <text key={i} x={CX} y={CY - t.ry - 6} textAnchor="middle" fill={COLORS[t.type]} fontSize="9" fontWeight="600" opacity="0.6">{t.label}</text>
               ))}
 
-              {/* Pitch */}
               <ellipse cx={CX} cy={CY} rx={PITCH_RX} ry={PITCH_RY} fill="#0d3d1a" stroke="#1b6e32" strokeWidth="1.5" />
               <line x1={CX} y1={CY - PITCH_RY + 8} x2={CX} y2={CY + PITCH_RY - 8} stroke="#2d8c4e" strokeWidth="1" opacity="0.5" />
               <rect x={CX - 12} y={CY - PITCH_RY + 6} width="24" height="4" rx="1" fill="#4caf50" opacity="0.4" />
               <rect x={CX - 12} y={CY + PITCH_RY - 10} width="24" height="4" rx="1" fill="#4caf50" opacity="0.4" />
               <text x={CX} y={CY + 4} textAnchor="middle" fill="#4caf50" fontSize="13" fontWeight="800" letterSpacing="2">PITCH</text>
 
-              {/* Stand labels */}
               <text x={CX} y={45} textAnchor="middle" fill="rgba(255,255,255,0.3)" fontSize="11" fontWeight="700" letterSpacing="3">NORTH STAND</text>
               <text x={CX} y={575} textAnchor="middle" fill="rgba(255,255,255,0.3)" fontSize="11" fontWeight="700" letterSpacing="3">SOUTH STAND</text>
               <text x={50} y={CY + 4} textAnchor="middle" fill="rgba(255,255,255,0.3)" fontSize="10" fontWeight="700" transform={`rotate(-90,50,${CY})`}>EAST</text>
               <text x={750} y={CY + 4} textAnchor="middle" fill="rgba(255,255,255,0.3)" fontSize="10" fontWeight="700" transform={`rotate(90,750,${CY})`}>WEST</text>
 
-              {/* Seats */}
               {ALL_SEATS.map(seat => {
                 const sel = selected.includes(seat.id);
                 const bkd = booked.includes(seat.id);
@@ -205,13 +205,12 @@ function SeatLayout() {
               })}
             </svg>
 
-            {/* Legend */}
             <div style={{ display: 'flex', justifyContent: 'center', gap: 20, flexWrap: 'wrap', padding: '12px 0 4px' }}>
               {[
                 { label: 'Available', bg: 'rgba(31,128,224,0.08)', border: 'rgba(31,128,224,0.3)' },
                 { label: 'Selected', bg: '#1f80e0', border: '#1f80e0' },
                 { label: 'Premium', bg: 'rgba(224,64,251,0.15)', border: 'rgba(224,64,251,0.4)' },
-                { label: 'Booked', bg: '#1a1028', border: '#2d1f4e' },
+                { label: 'Booked / Locked', bg: '#1a1028', border: '#2d1f4e' },
               ].map((item, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <div style={{ width: 14, height: 14, borderRadius: '50%', background: item.bg, border: `1.5px solid ${item.border}` }} />
@@ -224,7 +223,6 @@ function SeatLayout() {
 
         {/* ── Sidebar ── */}
         <div style={{ width: 300, position: 'sticky', top: 80 }}>
-          {/* Pricing */}
           <div style={{ padding: 18, borderRadius: 12, background: 'linear-gradient(135deg, #1f80e0, #0052a3)', marginBottom: 14 }}>
             <h4 style={{ fontSize: 14, fontWeight: 700, color: '#fff', margin: '0 0 10px 0' }}>🎫 Ticket Pricing</h4>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -237,7 +235,6 @@ function SeatLayout() {
             </div>
           </div>
 
-          {/* Selection */}
           <div style={{ padding: 18, borderRadius: 12, background: '#1a1028', border: '1px solid rgba(255,255,255,0.06)' }}>
             <h4 style={{ fontSize: 14, fontWeight: 700, color: '#fff', margin: '0 0 14px 0' }}>Your Selection</h4>
             <div style={{ textAlign: 'center', padding: '16px 0', marginBottom: 14, borderRadius: 10, background: 'rgba(31,128,224,0.06)', border: '1px solid rgba(31,128,224,0.1)' }}>

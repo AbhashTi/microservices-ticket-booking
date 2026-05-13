@@ -28,8 +28,6 @@ pipeline {
         NODE_VERSION  = '18'
     }
 
-    // Node.js installed inline in 'Install Dependencies' stage
-
     stages {
 
         stage('Checkout') {
@@ -38,37 +36,37 @@ pipeline {
             }
         }
 
-  stage('Install Dependencies') {
-    steps {
-        dir("${env.FRONTEND_DIR}") {
-            sh '''
-                export NVM_DIR="$HOME/.nvm"
-                [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-                nvm use 18
-                rm -rf build node_modules package-lock.json
-                npm install --legacy-peer-deps
-                npm install ajv@^8.0.0 --save-dev --legacy-peer-deps
-                node -v && npm -v
-            '''
+        stage('Install Dependencies') {
+            steps {
+                dir("${env.FRONTEND_DIR}") {
+                    sh '''
+                        export NVM_DIR="$HOME/.nvm"
+                        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+                        nvm use 18
+                        rm -rf build node_modules package-lock.json
+                        npm install --legacy-peer-deps
+                        npm install ajv@^8.0.0 --save-dev --legacy-peer-deps
+                        node -v && npm -v
+                    '''
+                }
+            }
         }
-    }
-}
 
-stage('Build React App') {
-    steps {
-        dir("${env.FRONTEND_DIR}") {
-            sh '''
-                export NVM_DIR="$HOME/.nvm"
-                [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-                nvm use 18
-                CI=false npm run build
-                # Remove any hardcoded IPs from compiled output
-                find build/static/js -name "*.js" -exec sed -i '' 's|http://172.16.180.127:8085||g' {} +
-            '''
-            echo "React build complete"
+        stage('Build React App') {
+            steps {
+                dir("${env.FRONTEND_DIR}") {
+                    sh '''
+                        export NVM_DIR="$HOME/.nvm"
+                        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+                        nvm use 18
+                        CI=false npm run build
+                        # Remove any hardcoded VM IPs from compiled output
+                        find build/static/js -name "*.js" -exec sed -i '' 's|http://172.16.180.127:8085||g' {} +
+                    '''
+                    echo "React build complete"
+                }
+            }
         }
-    }
-}
 
         stage('Docker Build') {
             steps {
@@ -100,22 +98,22 @@ stage('Build React App') {
         }
 
         stage('Restart Frontend Container') {
-    when { expression { currentBuild.currentResult == 'SUCCESS' } }
-    steps {
-        echo "Restarting frontend container..."
-        sh '''
-            docker stop frontend-app-container 2>/dev/null || true
-            docker rm frontend-app-container 2>/dev/null || true
-            docker run -d \
-                --name frontend-app-container \
-                --network movie-booking-system-microservices_movie-net \
-                -p 80:80 \
-                "$IMAGE_NAME"
-            echo "=== Frontend container status ==="
-            docker ps | grep frontend-app-container
-        '''
-    }
-}
+            when { expression { currentBuild.currentResult == 'SUCCESS' } }
+            steps {
+                echo "Restarting frontend container..."
+                sh '''
+                    docker stop frontend-app-container 2>/dev/null || true
+                    docker rm frontend-app-container 2>/dev/null || true
+                    docker run -d \
+                        --name frontend-app-container \
+                        --network movie-booking-system-microservices_movie-net \
+                        -p 80:80 \
+                        "$IMAGE_NAME"
+                    echo "=== Frontend container status ==="
+                    docker ps | grep frontend-app-container
+                '''
+            }
+        }
 
         stage('Deploy to Minikube (Optional)') {
             when {
@@ -142,7 +140,7 @@ stage('Build React App') {
     post {
         success {
             echo "Frontend pipeline SUCCESS (Build #${env.BUILD_NUMBER})"
-            echo "UI live at: http://172.16.180.127:80"
+            echo "UI live at: http://localhost:80"
             echo "Image: ${env.IMAGE_NAME}"
         }
         failure {

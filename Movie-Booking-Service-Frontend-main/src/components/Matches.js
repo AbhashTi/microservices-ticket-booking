@@ -21,7 +21,7 @@ function Matches() {
     setLoading(true);
     fetch(`${API}/matches`, {
       headers: {
-        "Authorization": `Bearer ${token}`,
+        "Authorization": token,
         "Content-Type": "application/json"
       }
     })

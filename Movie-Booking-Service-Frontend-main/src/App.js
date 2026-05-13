@@ -14,15 +14,13 @@ import { getToken } from './components/auth';
 
 function RequireAuth({ children }) {
   const token = getToken();
-  if (!token) 
-    return <Navigate to="/users/login" replace />
+  if (!token) return <Navigate to="/users/login" replace />
   return children
 }
 
 function App() {
   const location = useLocation();
   const [routeLoading, setRouteLoading] = useState(false);
-
   useEffect(() => {
     setRouteLoading(true);
     const t = setTimeout(() => setRouteLoading(false), 250);
@@ -31,26 +29,9 @@ function App() {
 
   return <>
     {routeLoading && (
-      <div style={{
-        position:'fixed',
-        inset:0,
-        background:'rgba(15,6,23,0.9)',
-        zIndex:1300,
-        display:'flex',
-        alignItems:'center',
-        justifyContent:'center',
-        backdropFilter:'blur(4px)',
-      }}>
+      <div style={{ position:'fixed', inset:0, background:'rgba(15,6,23,0.9)', zIndex:1300, display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(4px)' }}>
         <div style={{textAlign:'center'}}>
-          <div style={{
-            width:48,
-            height:48,
-            borderRadius:'50%',
-            border:'4px solid #1f80e0',
-            borderTopColor:'transparent',
-            animation:'spin 0.8s linear infinite',
-            margin:'0 auto',
-          }}></div>
+          <div style={{ width:48, height:48, borderRadius:'50%', border:'4px solid #1f80e0', borderTopColor:'transparent', animation:'spin 0.8s linear infinite', margin:'0 auto' }}></div>
           <p style={{color:'#888',marginTop:14,fontSize:13,fontWeight:600,letterSpacing:'1px'}}>LOADING</p>
         </div>
       </div>
@@ -61,6 +42,8 @@ function App() {
       <Route path='/users/login' element={<Login/>}/>
       <Route path='/bookmyshow/matches' element={<Matches/>}/>
       <Route path='/bookmyshow/matches/:id' element={<RequireAuth><Match/></RequireAuth>}/>
+      {/* FIX: seat-layout now takes both matchId and sessionId */}
+      <Route path='/bookmyshow/seat-layout/:id/:showId' element={<RequireAuth><SeatLayout/></RequireAuth>}/>
       <Route path='/bookmyshow/seat-layout/:showId' element={<RequireAuth><SeatLayout/></RequireAuth>}/>
       <Route path='/bookmyshow/payment/:theaterId/:showId/:selected/:total' element={<RequireAuth><Payment/></RequireAuth>}/>
       <Route path='/users/bookings' element={<RequireAuth><MyBookings/></RequireAuth>}/>
