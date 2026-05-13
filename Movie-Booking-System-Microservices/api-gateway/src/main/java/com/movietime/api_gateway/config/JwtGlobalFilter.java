@@ -34,7 +34,8 @@ public class JwtGlobalFilter implements GlobalFilter, Ordered {
         }
 
         // 2. Allow auth endpoints without JWT
-        if (path.startsWith("/auth/") || path.startsWith("/movies/")) {
+        if (path.startsWith("/auth/") || path.startsWith("/matches/") || path.startsWith("/matches")
+                || path.startsWith("/sessions/") || path.startsWith("/sessions")) {
             System.out.println("#### ALLOWING WITHOUT JWT: " + path);
             return chain.filter(exchange);
         }
@@ -74,8 +75,8 @@ public class JwtGlobalFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-             // *** THE FIX IS HERE ***
-        // Set a low precedence value (e.g., 50). This ensures this filter runs AFTER 
+        // *** THE FIX IS HERE ***
+        // Set a low precedence value (e.g., 50). This ensures this filter runs AFTER
         // Spring Cloud Gateway's internal filters, including the CORS filter.
         return 1000;
     }
