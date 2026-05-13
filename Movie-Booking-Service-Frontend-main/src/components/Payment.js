@@ -40,7 +40,7 @@ function Payment() {
       try {
         const API = process.env.REACT_APP_API_URL || "";
         const token = getToken();
-        const res = await fetch(`${API}/matches/shows/${showId}`, { headers: { "Authorization": token, "Content-Type": "application/json" } });
+        const res = await fetch(`${API}/matches/shows/${showId}`, { headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" } });
         if (!res.ok) return;
         const ct = res.headers.get('content-type') || '';
         if (!ct.includes('application/json')) return;
@@ -49,7 +49,7 @@ function Payment() {
         setShow(s);
         const movieId = s.movieId ?? s.movie_id ?? s.match
         if (movieId) {
-          const mres = await fetch(`${API}/matches/${movieId}`, { headers: { "Authorization": token, "Content-Type": "application/json" } });
+          const mres = await fetch(`${API}/matches/${movieId}`, { headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" } });
           if (mres && mres.ok) {
             const mct = mres.headers.get('content-type') || ''
             if (mct.includes('application/json')) {
@@ -80,7 +80,7 @@ function Payment() {
       const payload = { bookingId: bookingIdFromState, amount: amountFromState }
       const API = process.env.REACT_APP_API_URL || "";
       const token = getToken();
-      const res = await fetch(`${API}/payment/pay`, { method: 'POST', headers: { 'Authorization': token, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const res = await fetch(`${API}/payment/pay`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       if (!res.ok) { toast.error('Failed to start payment'); setLoading(false); setProcessingStep(-1); return; }
       await res.text()
       toast.success('🎉 Payment successful! Booking confirmed.')

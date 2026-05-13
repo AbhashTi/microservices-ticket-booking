@@ -51,7 +51,7 @@ function SeatLayout() {
     (async () => {
       try {
         // Fetch session details (prices)
-        const sr = await fetch(`${API}/sessions/${showId}`, { headers: { Authorization: token } });
+        const sr = await fetch(`${API}/sessions/${showId}`, { headers: { Authorization: `Bearer ${token}` } });
         if (sr.ok) {
           const s = await sr.json();
           if (!ok) return;
@@ -60,11 +60,11 @@ function SeatLayout() {
           setPricePremium(s.pricePremium ?? s.price_premium ?? 1500);
         }
         // Fetch match details
-        const mr = await fetch(`${API}/matches/${id}`, { headers: { Authorization: token } });
+        const mr = await fetch(`${API}/matches/${id}`, { headers: { Authorization: `Bearer ${token}` } });
         if (mr.ok) { const m = await mr.json(); if (ok) setMatch(m); }
         // Fetch booked seats
         try {
-          const br = await fetch(`${API}/bookings/show/${showId}/seats/status`, { headers: { Authorization: token } });
+          const br = await fetch(`${API}/bookings/show/${showId}/seats/status`, { headers: { Authorization: `Bearer ${token}` } });
           if (br.ok) {
             const ct = br.headers.get('content-type') || '';
             if (ct.includes('json')) {
@@ -100,10 +100,10 @@ function SeatLayout() {
         seatId: s.id, rowLabel: s.tierLabel, seatNumber: s.id,
         seatType: s.type, price: s.type === 'PREMIUM' ? pricePremium : priceRegular,
       }));
-      const payload = { showId: Number(showId), totalAmount: totalPrice, seats };
+      const payload = { sessionId: Number(showId), totalAmount: totalPrice, seats };
       const res = await fetch(`${API}/bookings/create`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: token },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {

@@ -6,6 +6,6 @@ import java.util.List;
 
 public interface BookedSeatRepository extends JpaRepository<BookedSeat, Long> {
     List<BookedSeat> findBySessionId(Long sessionId);
-    boolean existsByShowIdAndSeatId(Long sessionId, Long seatId);
+    boolean existsBySessionIdAndSeatId(Long sessionId, Long seatId);
     void deleteByBookingId(Long bookingId);
 }
