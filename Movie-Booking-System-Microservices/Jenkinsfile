@@ -198,6 +198,7 @@ pipeline {
 
                         # ✅ Start minikube if it is not already running
                         MINIKUBE_STATUS=\$(minikube status --format='{{.Host}}' 2>/dev/null || echo "Stopped")
+
                         if [ "\$MINIKUBE_STATUS" != "Running" ]; then
                             echo "Starting minikube..."
                             minikube start --driver=docker
@@ -210,27 +211,88 @@ pipeline {
 
                         # Create namespace
                         kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+
+                        # ✅ FIX 1: Load ALL service images into Minikube directly
+                        # so it never tries to pull from Docker Hub
+                        echo "=== Loading all images into Minikube ==="
+                        for SVC in discovery-server api-gateway user-service match-service booking-service payment-service notification-service; do
+                            echo "Loading abhashti/\$SVC:${env.IMAGE_TAG_FINAL} into minikube..."
+                            minikube image load abhashti/\$SVC:${env.IMAGE_TAG_FINAL}
+                        done
+
+                        # ✅ FIX 2: Apply ALL k8s manifests (replaces ketan803 image with abhashti
+                        # and sets imagePullPolicy: Never so minikube uses local images)
+                        K8S_DIR="${env.BACKEND_DIR}/k8s"
+
+                        # Map: k8s folder name → deployment name → service name in SERVICES var
+                        # eureka folder = discovery-server service
+                        # match-service folder has deployment named movie-service = match-service service
+
+                        echo "=== Applying discovery-server (eureka) ==="
+                        sed \
+                            -e 's|image: .*|image: abhashti/discovery-server:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                            \$K8S_DIR/eureka/eureka-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/eureka/eureka-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying api-gateway ==="
+                        sed \
+                            -e 's|image: .*|image: abhashti/api-gateway:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                            \$K8S_DIR/api-gateway/api-gateway-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/api-gateway/api-gateway-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying user-service ==="
+                        sed \
+                            -e 's|image: .*|image: abhashti/user-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                            \$K8S_DIR/user-service/user-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/user-service/user-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying match-service ==="
+                        sed \
+                            -e 's|image: .*|image: abhashti/match-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                            \$K8S_DIR/match-service/movie-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/match-service/movie-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying booking-service ==="
+                        sed \
+                            -e 's|image: .*|image: abhashti/booking-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                            \$K8S_DIR/booking-service/booking-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/booking-service/booking-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying payment-service ==="
+                        sed \
+                            -e 's|image: .*|image: abhashti/payment-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                            \$K8S_DIR/payment-service/payment-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/payment-service/payment-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying notification-service ==="
+                        sed \
+                            -e 's|image: .*|image: abhashti/notification-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                            \$K8S_DIR/notification-service/notification-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/notification-service/notification-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        # ✅ FIX 3: Wait for all deployments to roll out (300s each)
+                        echo "=== Waiting for all rollouts ==="
+                        # NOTE: eureka deployment is named 'eureka' in YAML, match-service is named 'movie-service'
+                        for DEPLOY in eureka api-gateway user-service movie-service booking-service payment-service notification-service; do
+                            echo "Waiting for \$DEPLOY..."
+                            kubectl rollout status deployment/\$DEPLOY \
+                                -n ${env.K8S_NAMESPACE} --timeout=300s || \
+                            echo "WARNING: \$DEPLOY rollout timed out — check pod logs"
+                        done
+
+                        echo "=== Final pod status ==="
+                        kubectl get pods -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Final service status ==="
+                        kubectl get svc -n ${env.K8S_NAMESPACE}
                     """
-
-                    def serviceList = env.SERVICES.split(',')
-                    serviceList.each { svc ->
-                        def imageName = "${env.DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
-                        sh """
-                            export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
-                            kubectl set image deployment/${svc} ${svc}=${imageName} \
-                                -n ${env.K8S_NAMESPACE} 2>/dev/null || \
-                            echo "Deployment ${svc} not found in K8s – skipping"
-                        """
-                    }
-
-                    serviceList.each { svc ->
-                        sh """
-                            export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
-                            kubectl rollout status deployment/${svc} \
-                                -n ${env.K8S_NAMESPACE} --timeout=120s 2>/dev/null || \
-                            echo "Rollout for ${svc} not found – skipping"
-                        """
-                    }
                 }
             }
         }
