@@ -24,7 +24,7 @@ pipeline {
         DOCKER_REPO   = 'abhashti'
         K8S_NAMESPACE = 'movie-app'
         FRONTEND_DIR  = "${WORKSPACE}/Movie-Booking-Service-Frontend-main"
-        KUBECTL       = '/snap/bin/kubectl'
+        KUBECTL = '/usr/local/bin/kubectl'
         NODE_VERSION  = '18'
     }
 

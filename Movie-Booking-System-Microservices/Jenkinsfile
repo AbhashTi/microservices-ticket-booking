@@ -23,7 +23,7 @@ pipeline {
         DOCKER_REPO   = 'abhashti'
         K8S_NAMESPACE = 'movie-app'
         BACKEND_DIR   = "${WORKSPACE}/Movie-Booking-System-Microservices"
-        KUBECTL       = '/snap/bin/kubectl'
+        KUBECTL = '/usr/local/bin/kubectl'
         SERVICES      = 'discovery-server,api-gateway,user-service,match-service,booking-service,payment-service,notification-service'
     }
 
