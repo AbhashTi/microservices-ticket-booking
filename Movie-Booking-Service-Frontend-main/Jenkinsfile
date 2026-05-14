@@ -189,9 +189,19 @@ pipeline {
                     # ✅ Make sure kubectl context points to minikube
                     kubectl config use-context minikube
 
-                    # Deploy
+                    # Create namespace
                     kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
 
+                    # ✅ FIX: Update image tag in k8s YAML and apply manifests first
+                    # This creates the deployment if it doesn't exist yet
+                    sed 's|image: .*|image: ${env.IMAGE_NAME}|g' \
+                        ${env.FRONTEND_DIR}/k8s/frontend-deployment.yaml | \
+                        kubectl apply -f - -n ${env.K8S_NAMESPACE}
+
+                    kubectl apply -f ${env.FRONTEND_DIR}/k8s/frontend-service.yaml \
+                        -n ${env.K8S_NAMESPACE}
+
+                    # ✅ Now update image (works because deployment now exists)
                     kubectl set image deployment/${env.SERVICE_NAME} \
                         ${env.SERVICE_NAME}=${env.IMAGE_NAME} \
                         -n ${env.K8S_NAMESPACE}
