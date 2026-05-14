@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: match-frontend
-  namespace: match-app
+  namespace: movie-app
 spec:
   replicas: 1
   selector:
