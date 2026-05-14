@@ -23,8 +23,24 @@ pipeline {
         DOCKER_REPO   = 'abhashti'
         K8S_NAMESPACE = 'movie-app'
         BACKEND_DIR   = "${WORKSPACE}/Movie-Booking-System-Microservices"
-        KUBECTL = '/usr/local/bin/kubectl'
         SERVICES      = 'discovery-server,api-gateway,user-service,match-service,booking-service,payment-service,notification-service'
+
+        // ✅ FIX: macOS kubectl paths — tries Homebrew (Apple Silicon & Intel) then fallback
+        KUBECTL = sh(
+            script: '''
+                if [ -f /opt/homebrew/bin/kubectl ]; then
+                    echo /opt/homebrew/bin/kubectl
+                elif [ -f /usr/local/bin/kubectl ]; then
+                    echo /usr/local/bin/kubectl
+                else
+                    echo kubectl
+                fi
+            ''',
+            returnStdout: true
+        ).trim()
+
+        // ✅ FIX: Ensure Homebrew bin dirs are always on PATH for all sh steps
+        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
     }
 
     stages {
@@ -32,6 +48,35 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+            }
+        }
+
+        // ✅ FIX: Verify all required tools are reachable on this macOS agent
+        stage('Verify Tools') {
+            steps {
+                sh '''
+                    echo "=== PATH ==="
+                    echo "$PATH"
+
+                    echo "=== kubectl ==="
+                    which kubectl || echo "kubectl NOT FOUND"
+                    kubectl version --client 2>/dev/null || echo "kubectl not working"
+
+                    echo "=== minikube ==="
+                    which minikube || echo "minikube NOT FOUND"
+                    minikube version 2>/dev/null || echo "minikube not working"
+
+                    echo "=== ansible ==="
+                    which ansible-playbook || echo "ansible-playbook NOT FOUND"
+                    ansible --version 2>/dev/null || echo "ansible not working"
+
+                    echo "=== docker ==="
+                    docker --version || echo "docker NOT FOUND"
+
+                    echo "=== java / mvn ==="
+                    java -version 2>&1 || echo "java NOT FOUND"
+                    mvn -version 2>/dev/null || echo "mvn NOT FOUND"
+                '''
             }
         }
 
@@ -103,25 +148,30 @@ pipeline {
             steps {
                 echo "Running Ansible playbook to deploy all services..."
                 sh '''
-                    # Install ansible if not present (macOS homebrew)
+                    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+                    # ✅ FIX: Install ansible via Homebrew if not present (macOS)
                     if ! command -v ansible-playbook &>/dev/null; then
-                        echo "Ansible not found — installing..."
-                        brew install ansible || pip3 install ansible --break-system-packages
+                        echo "Ansible not found — installing via Homebrew..."
+                        brew install ansible
                     fi
                     ansible --version
                 '''
                 dir("${env.BACKEND_DIR}") {
+                    // ✅ FIX: Use WORKSPACE-relative paths instead of hardcoded /Users/abhashtiwari
                     sh """
-                        ansible-playbook \
-                            -i /Users/abhashtiwari/bms_micro_servic3/Movie-Booking-System-Microservices/ansible/inventory.ini \
-                            /Users/abhashtiwari/bms_micro_servic3/Movie-Booking-System-Microservices/ansible/deploy.yml \
-                            -e "image_tag=${env.IMAGE_TAG_FINAL}" \
+                        export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
+                        ansible-playbook \\
+                            -i ${env.BACKEND_DIR}/ansible/inventory.ini \\
+                            ${env.BACKEND_DIR}/ansible/deploy.yml \\
+                            -e "image_tag=${env.IMAGE_TAG_FINAL}" \\
                             -v
                     """
                 }
             }
         }
 
+        // ✅ FIX: Full minikube + kubectl setup for macOS before deploying
         stage('Deploy to Minikube (Optional)') {
             when {
                 allOf {
@@ -131,18 +181,53 @@ pipeline {
             }
             steps {
                 script {
-                    sh "${env.KUBECTL} create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | ${env.KUBECTL} apply -f -"
+                    sh """
+                        export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
+
+                        # ✅ Install kubectl via Homebrew if missing
+                        if ! command -v kubectl &>/dev/null; then
+                            echo "kubectl not found — installing via Homebrew..."
+                            brew install kubectl
+                        fi
+
+                        # ✅ Install minikube via Homebrew if missing
+                        if ! command -v minikube &>/dev/null; then
+                            echo "minikube not found — installing via Homebrew..."
+                            brew install minikube
+                        fi
+
+                        # ✅ Start minikube if it is not already running
+                        MINIKUBE_STATUS=\$(minikube status --format='{{.Host}}' 2>/dev/null || echo "Stopped")
+                        if [ "\$MINIKUBE_STATUS" != "Running" ]; then
+                            echo "Starting minikube..."
+                            minikube start --driver=docker
+                        else
+                            echo "Minikube already running"
+                        fi
+
+                        # ✅ Make sure kubectl context points to minikube
+                        kubectl config use-context minikube
+
+                        # Create namespace
+                        kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                    """
+
                     def serviceList = env.SERVICES.split(',')
                     serviceList.each { svc ->
                         def imageName = "${env.DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
                         sh """
-                            ${env.KUBECTL} set image deployment/${svc} ${svc}=${imageName} -n ${env.K8S_NAMESPACE} 2>/dev/null || \
+                            export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
+                            kubectl set image deployment/${svc} ${svc}=${imageName} \
+                                -n ${env.K8S_NAMESPACE} 2>/dev/null || \
                             echo "Deployment ${svc} not found in K8s – skipping"
                         """
                     }
+
                     serviceList.each { svc ->
                         sh """
-                            ${env.KUBECTL} rollout status deployment/${svc} -n ${env.K8S_NAMESPACE} --timeout=120s 2>/dev/null || \
+                            export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
+                            kubectl rollout status deployment/${svc} \
+                                -n ${env.K8S_NAMESPACE} --timeout=120s 2>/dev/null || \
                             echo "Rollout for ${svc} not found – skipping"
                         """
                     }
