@@ -1,7 +1,6 @@
 // ============================================================
 // Backend Pipeline – Stadium Ticket Booking System
-// Builds all microservices → Docker rebuild → Live via docker-compose
-// Optionally deploys to Minikube K8s
+// Builds all microservices → Docker rebuild → Ansible Deploy → Live
 // ============================================================
 pipeline {
     agent any
@@ -16,7 +15,7 @@ pipeline {
         booleanParam(
             name: 'DEPLOY_K8S',
             defaultValue: false,
-            description: 'Also deploy to Minikube after docker-compose restart?'
+            description: 'Also deploy to Minikube after Ansible deploy?'
         )
     }
 
@@ -25,9 +24,7 @@ pipeline {
         K8S_NAMESPACE = 'movie-app'
         BACKEND_DIR   = "${WORKSPACE}/Movie-Booking-System-Microservices"
         KUBECTL       = '/snap/bin/kubectl'
-
-        // All microservice folder names (match directory names exactly)
-        SERVICES = 'discovery-server,api-gateway,user-service,match-service,booking-service,payment-service,notification-service'
+        SERVICES      = 'discovery-server,api-gateway,user-service,match-service,booking-service,payment-service,notification-service'
     }
 
     stages {
@@ -42,7 +39,6 @@ pipeline {
             steps {
                 script {
                     def serviceList = env.SERVICES.split(',')
-
                     serviceList.each { svc ->
                         dir("${env.BACKEND_DIR}/${svc}") {
                             echo "===== Building ${svc} ====="
@@ -66,7 +62,6 @@ pipeline {
                 script {
                     def imageTag = params.IMAGE_TAG ?: "build-${env.BUILD_NUMBER}"
                     env.IMAGE_TAG_FINAL = imageTag
-
                     def serviceList = env.SERVICES.split(',')
                     serviceList.each { svc ->
                         dir("${env.BACKEND_DIR}/${svc}") {
@@ -100,18 +95,29 @@ pipeline {
             }
         }
 
-        stage('Restart via Docker Compose') {
+        // ══════════════════════════════════════════════════
+        // ANSIBLE STAGE — pulls images & deploys full stack
+        // ══════════════════════════════════════════════════
+        stage('Ansible Deploy') {
             when { expression { currentBuild.currentResult == 'SUCCESS' } }
             steps {
-                echo "Restarting all services via docker-compose with new images..."
+                echo "Running Ansible playbook to deploy all services..."
+                sh '''
+                    # Install ansible if not present (macOS homebrew)
+                    if ! command -v ansible-playbook &>/dev/null; then
+                        echo "Ansible not found — installing..."
+                        brew install ansible || pip3 install ansible --break-system-packages
+                    fi
+                    ansible --version
+                '''
                 dir("${env.BACKEND_DIR}") {
-                    sh '''
-                        docker compose down --remove-orphans || true
-                        docker compose up -d --build
-                        sleep 15
-                        echo "=== Running containers ==="
-                        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-                    '''
+                    sh """
+                        ansible-playbook \
+                            -i /Users/abhashtiwari/bms_micro_servic3/Movie-Booking-System-Microservices/ansible/inventory.ini \
+                            /Users/abhashtiwari/bms_micro_servic3/Movie-Booking-System-Microservices/ansible/deploy.yml \
+                            -e "image_tag=${env.IMAGE_TAG_FINAL}" \
+                            -v
+                    """
                 }
             }
         }
@@ -126,7 +132,6 @@ pipeline {
             steps {
                 script {
                     sh "${env.KUBECTL} create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | ${env.KUBECTL} apply -f -"
-
                     def serviceList = env.SERVICES.split(',')
                     serviceList.each { svc ->
                         def imageName = "${env.DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
@@ -135,7 +140,6 @@ pipeline {
                             echo "Deployment ${svc} not found in K8s – skipping"
                         """
                     }
-
                     serviceList.each { svc ->
                         sh """
                             ${env.KUBECTL} rollout status deployment/${svc} -n ${env.K8S_NAMESPACE} --timeout=120s 2>/dev/null || \
@@ -150,9 +154,9 @@ pipeline {
     post {
         success {
             echo "Backend pipeline SUCCESS (Build #${env.BUILD_NUMBER})"
-            echo "App running at: http://172.16.180.127:80"
-            echo "API Gateway at: http://172.16.180.127:8085"
-            echo "Eureka at:      http://172.16.180.127:8761"
+            echo "App running at: http://localhost:80"
+            echo "API Gateway at: http://localhost:8085"
+            echo "Eureka at:      http://localhost:8761"
         }
         failure {
             echo "Backend pipeline FAILED at Build #${env.BUILD_NUMBER}"

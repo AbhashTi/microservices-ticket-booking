@@ -1,0 +1,147 @@
+---
+# ============================================================
+# StadiumPass — Ansible Deployment Playbook
+# Runs on localhost (same machine as Jenkins)
+# Called by Jenkins backend pipeline after Docker push
+# ============================================================
+
+- name: Deploy StadiumPass microservices
+  hosts: local
+  become: false
+
+  vars:
+    project_dir: "{{ lookup('env', 'WORKSPACE') }}/Movie-Booking-System-Microservices"
+    frontend_dir: "{{ lookup('env', 'WORKSPACE') }}/Movie-Booking-Service-Frontend-main"
+    docker_network: "movie-booking-system-microservices_movie-net"
+    image_tag: "{{ lookup('env', 'IMAGE_TAG_FINAL') | default('latest') }}"
+    docker_repo: "abhashti"
+    services:
+      - discovery-server
+      - api-gateway
+      - user-service
+      - match-service
+      - booking-service
+      - payment-service
+      - notification-service
+
+  tasks:
+
+    # ── 1. Verify Docker is available ──────────────────────
+    - name: Check Docker is installed and running
+      command: docker info
+      register: docker_check
+      changed_when: false
+      failed_when: docker_check.rc != 0
+
+    - name: Print Docker version
+      command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Show Docker version
+      debug:
+        msg: "Docker version: {{ docker_version.stdout }}"
+
+    # ── 2. Pull latest images from Docker Hub ──────────────
+    - name: Pull latest image for each microservice
+      command: "docker pull {{ docker_repo }}/{{ item }}:{{ image_tag }}"
+      loop: "{{ services }}"
+      register: pull_result
+      changed_when: "'Status: Image is up to date' not in pull_result.stdout"
+
+    - name: Show pull results
+      debug:
+        msg: "Pulled {{ item.item }}: {{ item.stdout_lines[-1] }}"
+      loop: "{{ pull_result.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ── 3. Verify docker-compose file exists ───────────────
+    - name: Check docker-compose.yml exists
+      stat:
+        path: "{{ project_dir }}/docker-compose.yml"
+      register: compose_file
+
+    - name: Fail if docker-compose.yml is missing
+      fail:
+        msg: "docker-compose.yml not found at {{ project_dir }}"
+      when: not compose_file.stat.exists
+
+    # ── 4. Stop existing containers cleanly ────────────────
+    - name: Tear down existing containers
+      command: docker compose down --remove-orphans
+      args:
+        chdir: "{{ project_dir }}"
+      register: down_result
+      ignore_errors: true
+      changed_when: true
+
+    - name: Show compose down output
+      debug:
+        msg: "{{ down_result.stdout_lines }}"
+
+    # ── 5. Start all backend containers ────────────────────
+    - name: Start all services with docker compose
+      command: docker compose up -d --build
+      args:
+        chdir: "{{ project_dir }}"
+      register: up_result
+      changed_when: true
+
+    - name: Show compose up output
+      debug:
+        msg: "{{ up_result.stdout_lines }}"
+
+    # ── 6. Wait for API Gateway to be healthy ──────────────
+    - name: Wait for API Gateway to respond (port 8085)
+      wait_for:
+        host: localhost
+        port: 8085
+        delay: 10
+        timeout: 120
+        state: started
+      register: gateway_wait
+
+    - name: Wait for Eureka to respond (port 8761)
+      wait_for:
+        host: localhost
+        port: 8761
+        delay: 5
+        timeout: 90
+        state: started
+
+    # ── 7. Health check — verify key endpoints ─────────────
+    - name: Hit /matches endpoint to verify stack is live
+      uri:
+        url: http://localhost:8085/matches
+        method: GET
+        status_code: 200
+        timeout: 30
+      register: health_check
+      retries: 5
+      delay: 10
+      until: health_check.status == 200
+
+    - name: Report health check result
+      debug:
+        msg: "Health check passed — /matches returned {{ health_check.status }}, found {{ health_check.json | length }} matches"
+
+    # ── 8. Print running container summary ─────────────────
+    - name: List all running containers
+      command: docker ps --format "table {% raw %}{{.Names}}\t{{.Status}}\t{{.Ports}}{% endraw %}"
+      register: container_list
+      changed_when: false
+
+    - name: Show running containers
+      debug:
+        msg: "{{ container_list.stdout_lines }}"
+
+    # ── 9. Print access URLs ────────────────────────────────
+    - name: Print live service URLs
+      debug:
+        msg:
+          - "StadiumPass UI  → http://localhost:80"
+          - "API Gateway     → http://localhost:8085"
+          - "Eureka          → http://localhost:8761"
+          - "RabbitMQ UI     → http://localhost:15672"
+          - "Kibana          → http://localhost:5601"
