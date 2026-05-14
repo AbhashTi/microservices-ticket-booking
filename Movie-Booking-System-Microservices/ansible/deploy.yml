@@ -97,8 +97,8 @@
       wait_for:
         host: localhost
         port: 8085
-        delay: 10
-        timeout: 120
+        delay: 15
+        timeout: 180
         state: started
       register: gateway_wait
 
@@ -106,11 +106,19 @@
       wait_for:
         host: localhost
         port: 8761
-        delay: 5
-        timeout: 90
+        delay: 10
+        timeout: 120
         state: started
 
+    # ✅ FIX: Give services extra time to register with Eureka
+    # Spring Boot services take 60-90s to fully register after startup
+    - name: Wait for all services to register with Eureka
+      pause:
+        seconds: 60
+
     # ── 7. Health check — verify key endpoints ─────────────
+    # ✅ FIX: Increased retries from 5→15 and delay from 10s→15s
+    # Total wait time: 225s (was 50s) — enough for Eureka propagation
     - name: Hit /matches endpoint to verify stack is live
       uri:
         url: http://localhost:8085/matches
@@ -118,9 +126,40 @@
         status_code: 200
         timeout: 30
       register: health_check
-      retries: 5
-      delay: 10
+      retries: 15
+      delay: 15
       until: health_check.status == 200
+
+    # ── 7b. Restart frontend container with latest image ───
+    # ✅ FIX: Restart frontend after backend is confirmed healthy
+    - name: Stop old frontend container
+      command: docker stop frontend-app-container
+      ignore_errors: true
+      changed_when: true
+
+    - name: Remove old frontend container
+      command: docker rm frontend-app-container
+      ignore_errors: true
+      changed_when: true
+
+    - name: Start fresh frontend container
+      command: >
+        docker run -d
+        --name frontend-app-container
+        --network {{ docker_network }}
+        -p 80:80
+        {{ docker_repo }}/match-frontend:{{ image_tag }}
+      register: frontend_start
+      changed_when: true
+
+    - name: Confirm frontend container is running
+      command: docker ps --filter name=frontend-app-container --format "{{ '{{' }}.Status{{ '}}' }}"
+      register: frontend_status
+      changed_when: false
+
+    - name: Show frontend status
+      debug:
+        msg: "Frontend container status: {{ frontend_status.stdout }}"
 
     - name: Report health check result
       debug:
