@@ -32,9 +32,9 @@ spec:
             - name: SPRING_DATASOURCE_URL
               value: "jdbc:postgresql://movie-db:5432/match_db"
             - name: SPRING_DATASOURCE_USERNAME
-              value: "match_user"
+              value: "movie_user"
             - name: SPRING_DATASOURCE_PASSWORD
-              value: "match_pass"
+              value: "movie_pass"
             - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
               value: "http://eureka:8761/eureka/"
             - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS
