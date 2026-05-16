@@ -13,10 +13,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: movie-frontend
+                name: match-frontend
                 port:
                   number: 80
-
           - path: /auth
             pathType: Prefix
             backend:
@@ -24,15 +23,20 @@ spec:
                 name: api-gateway
                 port:
                   number: 8085
-
-          - path: /movies
+          - path: /matches
             pathType: Prefix
             backend:
               service:
                 name: api-gateway
                 port:
                   number: 8085
-
+          - path: /sessions
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8085
           - path: /bookings
             pathType: Prefix
             backend:
@@ -40,7 +44,6 @@ spec:
                 name: api-gateway
                 port:
                   number: 8085
-
           - path: /payment
             pathType: Prefix
             backend:

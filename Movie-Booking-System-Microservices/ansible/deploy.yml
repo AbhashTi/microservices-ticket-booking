@@ -14,6 +14,7 @@
     frontend_dir: "{{ lookup('env', 'WORKSPACE') }}/Movie-Booking-Service-Frontend-main"
     docker_network: "movie-booking-system-microservices_movie-net"
     image_tag: "{{ lookup('env', 'IMAGE_TAG_FINAL') | default('latest') }}"
+    deploy_k8s: "{{ lookup('env', 'DEPLOY_K8S') | default('false') }}"
     docker_repo: "abhashti"
     services:
       - discovery-server
@@ -133,16 +134,19 @@
     # ── 7b. Restart frontend container with latest image ───
     # ✅ FIX: Restart frontend after backend is confirmed healthy
     - name: Stop old frontend container
+      when: deploy_k8s | string | lower != 'true'
       command: docker stop frontend-app-container
       ignore_errors: true
       changed_when: true
 
     - name: Remove old frontend container
+      when: deploy_k8s | string | lower != 'true'
       command: docker rm frontend-app-container
       ignore_errors: true
       changed_when: true
 
     - name: Start fresh frontend container
+      when: deploy_k8s | string | lower != 'true'
       command: >
         docker run -d
         --name frontend-app-container
@@ -153,11 +157,13 @@
       changed_when: true
 
     - name: Confirm frontend container is running
+      when: deploy_k8s | string | lower != 'true'
       command: docker ps --filter name=frontend-app-container --format "{{ '{{' }}.Status{{ '}}' }}"
       register: frontend_status
       changed_when: false
 
     - name: Show frontend status
+      when: deploy_k8s | string | lower != 'true'
       debug:
         msg: "Frontend container status: {{ frontend_status.stdout }}"
 

@@ -1,0 +1,18 @@
+REPLACE the entire 'Deploy to Minikube (Optional)' stage steps block with:
+
+                    # Build a K8s-specific image with CoreDNS nginx config
+                    docker build \
+                        --build-arg NGINX_CONF=nginx.conf.k8s \
+                        -t "${env.IMAGE_NAME}-k8s" \
+                        -f Dockerfile.k8s \
+                        .
+
+                    minikube image load "${env.IMAGE_NAME}-k8s"
+
+                    sed \
+                        -e "s|image: .*|image: ${env.IMAGE_NAME}-k8s|g" \
+                        -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                        ${env.FRONTEND_DIR}/k8s/frontend-deployment.yaml | \
+                        kubectl apply -f - -n ${env.K8S_NAMESPACE}
+
+AND add this Dockerfile.k8s to the frontend dir (already written by this script).
