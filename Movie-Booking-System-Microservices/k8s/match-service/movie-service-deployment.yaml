@@ -18,8 +18,7 @@ spec:
           image: ketan803/movie-service:main-1
           imagePullPolicy: Always
           ports:
-          - containerPort: 8086
-
+            - containerPort: 8086
           resources:
             requests:
               cpu: 400m
@@ -30,40 +29,21 @@ spec:
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "docker"
-
-            # DB configs
             - name: SPRING_DATASOURCE_URL
-              value: "jdbc:postgresql://movie-db:5432/movie_db"
-
+              value: "jdbc:postgresql://movie-db:5432/match_db"
             - name: SPRING_DATASOURCE_USERNAME
               value: "movie_user"
-
             - name: SPRING_DATASOURCE_PASSWORD
               value: "movie_pass"
-
-            # Eureka
             - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
               value: "http://eureka:8761/eureka/"
-
             - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS
               value: "true"
-
-            # RabbitMQ
             - name: SPRING_RABBITMQ_HOST
               value: "rabbitmq"
-
             - name: SPRING_RABBITMQ_PORT
               value: "5672"
-
             - name: SPRING_RABBITMQ_USERNAME
               value: "root"
-
             - name: SPRING_RABBITMQ_PASSWORD
               value: "root"
-
-            # Redis
-            # - name: SPRING_REDIS_HOST
-            #   value: "redis"
-
-            # - name: SPRING_REDIS_PORT
-            #   value: "6379"

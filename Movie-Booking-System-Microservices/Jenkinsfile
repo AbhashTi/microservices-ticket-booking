@@ -1,6 +1,6 @@
 // ============================================================
 // Backend Pipeline – Stadium Ticket Booking System
-// Builds all microservices → Docker rebuild → Ansible Deploy → Live
+// Builds all microservices → Docker rebuild → Ansible Deploy → K8s → Seed → Live
 // ============================================================
 pipeline {
     agent any
@@ -25,7 +25,6 @@ pipeline {
         BACKEND_DIR   = "${WORKSPACE}/Movie-Booking-System-Microservices"
         SERVICES      = 'discovery-server,api-gateway,user-service,match-service,booking-service,payment-service,notification-service'
 
-        // ✅ FIX: macOS kubectl paths — tries Homebrew (Apple Silicon & Intel) then fallback
         KUBECTL = sh(
             script: '''
                 if [ -f /opt/homebrew/bin/kubectl ]; then
@@ -39,7 +38,6 @@ pipeline {
             returnStdout: true
         ).trim()
 
-        // ✅ FIX: Ensure Homebrew bin dirs are always on PATH for all sh steps
         PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
     }
 
@@ -51,7 +49,6 @@ pipeline {
             }
         }
 
-        // ✅ FIX: Verify all required tools are reachable on this macOS agent
         stage('Verify Tools') {
             steps {
                 sh '''
@@ -140,17 +137,12 @@ pipeline {
             }
         }
 
-        // ══════════════════════════════════════════════════
-        // ANSIBLE STAGE — pulls images & deploys full stack
-        // ══════════════════════════════════════════════════
         stage('Ansible Deploy') {
             when { expression { currentBuild.currentResult == 'SUCCESS' } }
             steps {
                 echo "Running Ansible playbook to deploy all services..."
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-
-                    # ✅ FIX: Install ansible via Homebrew if not present (macOS)
                     if ! command -v ansible-playbook &>/dev/null; then
                         echo "Ansible not found — installing via Homebrew..."
                         brew install ansible
@@ -158,7 +150,6 @@ pipeline {
                     ansible --version
                 '''
                 dir("${env.BACKEND_DIR}") {
-                    // ✅ FIX: Use WORKSPACE-relative paths instead of hardcoded /Users/abhashtiwari
                     sh """
                         export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
                         ansible-playbook \\
@@ -171,7 +162,6 @@ pipeline {
             }
         }
 
-        // ✅ FIX: Full minikube + kubectl setup for macOS before deploying
         stage('Deploy to Minikube (Optional)') {
             when {
                 allOf {
@@ -184,21 +174,14 @@ pipeline {
                     sh """
                         export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
 
-                        # ✅ Install kubectl via Homebrew if missing
                         if ! command -v kubectl &>/dev/null; then
-                            echo "kubectl not found — installing via Homebrew..."
                             brew install kubectl
                         fi
-
-                        # ✅ Install minikube via Homebrew if missing
                         if ! command -v minikube &>/dev/null; then
-                            echo "minikube not found — installing via Homebrew..."
                             brew install minikube
                         fi
 
-                        # ✅ Start minikube if it is not already running
                         MINIKUBE_STATUS=\$(minikube status --format='{{.Host}}' 2>/dev/null || echo "Stopped")
-
                         if [ "\$MINIKUBE_STATUS" != "Running" ]; then
                             echo "Starting minikube..."
                             minikube start --driver=docker
@@ -206,84 +189,87 @@ pipeline {
                             echo "Minikube already running"
                         fi
 
-                        # ✅ Make sure kubectl context points to minikube
                         kubectl config use-context minikube
-
-                        # Create namespace
                         kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
 
-                        # ✅ FIX 1: Load ALL service images into Minikube directly
-                        # so it never tries to pull from Docker Hub
-                        echo "=== Loading all images into Minikube ==="
+                        K8S_DIR="${env.BACKEND_DIR}/k8s"
+
+                        echo "=== Applying infrastructure (DBs, Redis, RabbitMQ) ==="
+                        kubectl apply -f \$K8S_DIR/user-db/user-db-secret.yaml    -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/user-db/user-db-statefulset.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/user-db/user-db-service.yaml   -n ${env.K8S_NAMESPACE}
+
+                        kubectl apply -f \$K8S_DIR/movie-db/movie-db-secret.yaml    -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/movie-db/movie-db-statefulset.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/movie-db/movie-db-service.yaml   -n ${env.K8S_NAMESPACE}
+
+                        kubectl apply -f \$K8S_DIR/booking-db/booking-db-secret.yaml    -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/booking-db/booking-db-statefulset.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/booking-db/booking-db-service.yaml   -n ${env.K8S_NAMESPACE}
+
+                        kubectl apply -f \$K8S_DIR/redis/redis-deployment.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/redis/redis-service.yaml    -n ${env.K8S_NAMESPACE}
+
+                        kubectl apply -f \$K8S_DIR/rabbitmq/rabbitmq-secret.yaml     -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/rabbitmq/rabbitmq-deployment.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/rabbitmq/rabbitmq-service.yaml    -n ${env.K8S_NAMESPACE}
+
+                        echo "Waiting 30s for DBs to initialise..."
+                        sleep 30
+
+                        echo "=== Loading all service images into Minikube ==="
                         for SVC in discovery-server api-gateway user-service match-service booking-service payment-service notification-service; do
-                            echo "Loading abhashti/\$SVC:${env.IMAGE_TAG_FINAL} into minikube..."
+                            echo "Loading abhashti/\$SVC:${env.IMAGE_TAG_FINAL}..."
                             minikube image load abhashti/\$SVC:${env.IMAGE_TAG_FINAL}
                         done
 
-                        # ✅ FIX 2: Apply ALL k8s manifests (replaces ketan803 image with abhashti
-                        # and sets imagePullPolicy: Never so minikube uses local images)
-                        K8S_DIR="${env.BACKEND_DIR}/k8s"
-
-                        # Map: k8s folder name → deployment name → service name in SERVICES var
-                        # eureka folder = discovery-server service
-                        # match-service folder has deployment named movie-service = match-service service
-
                         echo "=== Applying discovery-server (eureka) ==="
-                        sed \
-                            -e 's|image: .*|image: abhashti/discovery-server:${env.IMAGE_TAG_FINAL}|g' \
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                        sed -e 's|image: .*|image: abhashti/discovery-server:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
                             \$K8S_DIR/eureka/eureka-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/eureka/eureka-service.yaml -n ${env.K8S_NAMESPACE}
 
                         echo "=== Applying api-gateway ==="
-                        sed \
-                            -e 's|image: .*|image: abhashti/api-gateway:${env.IMAGE_TAG_FINAL}|g' \
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                        sed -e 's|image: .*|image: abhashti/api-gateway:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
                             \$K8S_DIR/api-gateway/api-gateway-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/api-gateway/api-gateway-service.yaml -n ${env.K8S_NAMESPACE}
 
                         echo "=== Applying user-service ==="
-                        sed \
-                            -e 's|image: .*|image: abhashti/user-service:${env.IMAGE_TAG_FINAL}|g' \
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                        sed -e 's|image: .*|image: abhashti/user-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
                             \$K8S_DIR/user-service/user-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/user-service/user-service-service.yaml -n ${env.K8S_NAMESPACE}
 
                         echo "=== Applying match-service ==="
-                        sed \
-                            -e 's|image: .*|image: abhashti/match-service:${env.IMAGE_TAG_FINAL}|g' \
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                        sed -e 's|image: .*|image: abhashti/match-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
                             \$K8S_DIR/match-service/movie-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/match-service/movie-service-service.yaml -n ${env.K8S_NAMESPACE}
 
                         echo "=== Applying booking-service ==="
-                        sed \
-                            -e 's|image: .*|image: abhashti/booking-service:${env.IMAGE_TAG_FINAL}|g' \
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                        sed -e 's|image: .*|image: abhashti/booking-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
                             \$K8S_DIR/booking-service/booking-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/booking-service/booking-service-service.yaml -n ${env.K8S_NAMESPACE}
 
                         echo "=== Applying payment-service ==="
-                        sed \
-                            -e 's|image: .*|image: abhashti/payment-service:${env.IMAGE_TAG_FINAL}|g' \
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                        sed -e 's|image: .*|image: abhashti/payment-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
                             \$K8S_DIR/payment-service/payment-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/payment-service/payment-service-service.yaml -n ${env.K8S_NAMESPACE}
 
                         echo "=== Applying notification-service ==="
-                        sed \
-                            -e 's|image: .*|image: abhashti/notification-service:${env.IMAGE_TAG_FINAL}|g' \
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+                        sed -e 's|image: .*|image: abhashti/notification-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
                             \$K8S_DIR/notification-service/notification-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/notification-service/notification-service-service.yaml -n ${env.K8S_NAMESPACE}
 
-                        # ✅ FIX 3: Wait for all deployments to roll out (300s each)
                         echo "=== Waiting for all rollouts ==="
-                        # NOTE: eureka deployment is named 'eureka' in YAML, match-service is named 'movie-service'
                         for DEPLOY in eureka api-gateway user-service movie-service booking-service payment-service notification-service; do
                             echo "Waiting for \$DEPLOY..."
-                            kubectl rollout status deployment/\$DEPLOY \
-                                -n ${env.K8S_NAMESPACE} --timeout=300s || \
+                            kubectl rollout status deployment/\$DEPLOY \\
+                                -n ${env.K8S_NAMESPACE} --timeout=300s || \\
                             echo "WARNING: \$DEPLOY rollout timed out — check pod logs"
                         done
 
@@ -296,14 +282,62 @@ pipeline {
                 }
             }
         }
+
+        // ══════════════════════════════════════════════════
+        // SEED STAGE — populates match + session data
+        // Only runs when K8s deploy is enabled
+        // Safe to re-run — seed_matches.py skips existing data
+        // ══════════════════════════════════════════════════
+        stage('Seed Match Data') {
+            when {
+                allOf {
+                    expression { currentBuild.currentResult == 'SUCCESS' }
+                    expression { params.DEPLOY_K8S == true }
+                }
+            }
+            steps {
+                sh """
+                    export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
+
+                    echo "=== Waiting 20s for services to register with Eureka ==="
+                    sleep 20
+
+                    echo "=== Starting port-forward to api-gateway ==="
+                    pkill -f "port-forward.*8085" 2>/dev/null || true
+                    sleep 2
+                    kubectl port-forward svc/api-gateway 8085:8085 -n ${env.K8S_NAMESPACE} &
+                    PF_PID=\$!
+                    echo "Port-forward PID: \$PF_PID"
+                    sleep 8
+
+                    echo "=== Installing python requests if missing ==="
+                    pip3 install requests --break-system-packages --quiet 2>/dev/null || true
+
+                    echo "=== Running seed script ==="
+                    python3 ${WORKSPACE}/seed_matches.py || echo "Seed completed (some matches may already exist)"
+
+                    echo "=== Stopping port-forward ==="
+                    kill \$PF_PID 2>/dev/null || true
+
+                    echo "=== Seed stage done ==="
+                """
+            }
+        }
+
     }
 
     post {
         success {
             echo "Backend pipeline SUCCESS (Build #${env.BUILD_NUMBER})"
-            echo "App running at: http://localhost:80"
-            echo "API Gateway at: http://localhost:8085"
-            echo "Eureka at:      http://localhost:8761"
+            echo ""
+            echo "╔══════════════════════════════════════════╗"
+            echo "║         STADIUMPASS IS LIVE! 🏏           ║"
+            echo "╠══════════════════════════════════════════╣"
+            echo "║  Docker mode  → http://localhost:80       ║"
+            echo "║  K8s mode     → run:                      ║"
+            echo "║  minikube service match-frontend           ║"
+            echo "║               -n movie-app                 ║"
+            echo "╚══════════════════════════════════════════╝"
         }
         failure {
             echo "Backend pipeline FAILED at Build #${env.BUILD_NUMBER}"

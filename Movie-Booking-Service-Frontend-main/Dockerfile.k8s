@@ -1,5 +1,4 @@
 FROM nginx:alpine
-# Use the K8s-mode nginx config (CoreDNS resolver)
 COPY nginx.conf.k8s /etc/nginx/conf.d/default.conf
 COPY build/ /usr/share/nginx/html
 EXPOSE 80
