@@ -25,6 +25,7 @@ spec:
           volumeMounts:
             - name: movie-db-storage
               mountPath: /var/lib/postgresql/data
+              subPath: pgdata
   volumeClaimTemplates:
     - metadata:
         name: movie-db-storage

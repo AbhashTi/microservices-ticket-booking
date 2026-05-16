@@ -1,11 +1,30 @@
 import requests
 import json
+import time
 from datetime import datetime, timedelta
 
 API_BASE = "http://localhost:8085"
 
+def wait_for_service(url, timeout=120):
+    print(f"Waiting for service at {url}...")
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            r = requests.get(url, timeout=5)
+            if r.status_code < 500:
+                print("Service is up!")
+                return True
+        except Exception:
+            pass
+        print("  ...not ready yet, retrying in 5s")
+        time.sleep(5)
+    print(f"Service did not become ready in {timeout}s")
+    return False
+
+# Wait for api-gateway to be up
+wait_for_service(f"{API_BASE}/matches", timeout=120)
+
 def get_token():
-    # Try to signup first
     signup_url = f"{API_BASE}/auth/signup"
     user_data = {
         "fullName": "Admin User",
@@ -14,19 +33,15 @@ def get_token():
         "role": "ADMIN"
     }
     try:
-        resp = requests.post(signup_url, json=user_data)
+        resp = requests.post(signup_url, json=user_data, timeout=10)
         if resp.status_code in [200, 201]:
             return resp.json()["token"]
-    except:
+    except Exception:
         pass
-    
-    # If signup fails (maybe user exists), try to signin
+
     signin_url = f"{API_BASE}/auth/signin"
-    login_data = {
-        "email": "admin@stadiumpass.com",
-        "password": "password123"
-    }
-    resp = requests.post(signin_url, json=login_data)
+    login_data = {"email": "admin@stadiumpass.com", "password": "password123"}
+    resp = requests.post(signin_url, json=login_data, timeout=10)
     if resp.status_code == 200:
         return resp.json()["token"]
     else:
@@ -48,7 +63,7 @@ def create_match(teams, tournament, format, stadium, description, poster_url):
         "matchDate": datetime.now().strftime("%Y-%m-%d"),
         "active": True
     }
-    resp = requests.post(url, json=payload, headers=HEADERS)
+    resp = requests.post(url, json=payload, headers=HEADERS, timeout=10)
     if resp.status_code in [200, 201]:
         print(f"Created match: {teams}")
         return resp.json()["id"]
@@ -67,7 +82,7 @@ def create_session(match_id, stadium, start_time):
         "priceRegular": 500.0,
         "pricePremium": 1500.0
     }
-    resp = requests.post(url, json=payload, headers=HEADERS)
+    resp = requests.post(url, json=payload, headers=HEADERS, timeout=10)
     if resp.status_code in [200, 201]:
         print(f"Created session for match {match_id}")
     else:
@@ -76,7 +91,6 @@ def create_session(match_id, stadium, start_time):
 if not TOKEN:
     print("Could not get auth token. Exiting.")
 else:
-    # Matches data
     matches = [
         {
             "teams": "India vs Australia",
@@ -115,7 +129,8 @@ else:
     for m in matches:
         mid = create_match(m["teams"], m["tournament"], m["format"], m["stadium"], m["description"], m["posterUrl"])
         if mid:
-            # Create a few sessions for each match
             now = datetime.now()
             create_session(mid, m["stadium"], (now + timedelta(days=2, hours=10)).isoformat() + 'Z')
             create_session(mid, m["stadium"], (now + timedelta(days=3, hours=14)).isoformat() + 'Z')
+
+print("Seeding complete.")

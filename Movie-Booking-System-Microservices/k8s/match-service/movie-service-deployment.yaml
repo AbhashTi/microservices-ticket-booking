@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: movie-service
-          image: ketan803/movie-service:main-1
+          image: abhashti/match-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8086
@@ -32,9 +32,9 @@ spec:
             - name: SPRING_DATASOURCE_URL
               value: "jdbc:postgresql://movie-db:5432/match_db"
             - name: SPRING_DATASOURCE_USERNAME
-              value: "movie_user"
+              value: "match_user"
             - name: SPRING_DATASOURCE_PASSWORD
-              value: "movie_pass"
+              value: "match_pass"
             - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
               value: "http://eureka:8761/eureka/"
             - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS

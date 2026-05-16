@@ -1,6 +1,6 @@
 FROM nginx:alpine
-# Use the Docker-mode nginx config (127.0.0.11 resolver, not kube-dns)
-COPY nginx.conf.docker /etc/nginx/conf.d/default.conf
+# K8s mode: CoreDNS resolver + api-gateway.movie-app.svc.cluster.local
+COPY nginx.conf.k8s /etc/nginx/conf.d/default.conf
 COPY build/ /usr/share/nginx/html
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
