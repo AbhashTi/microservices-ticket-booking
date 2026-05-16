@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: api-gateway
-          image: ketan803/api-gateway:main-8  # or use your tagged version
+          image: abhashti/api-gateway:k8s
           imagePullPolicy: Always
           resources:
             requests:
@@ -29,10 +29,7 @@ spec:
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "docker"
-
-            # Eureka registry address
             - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
               value: "http://eureka:8761/eureka/"
-
             - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS
               value: "true"
