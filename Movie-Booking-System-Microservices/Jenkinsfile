@@ -77,7 +77,7 @@ pipeline {
             }
         }
 
-        stage('Build AAll Microservices') {
+        stage('Build All Microservices') {
             steps {
                 script {
                     def serviceList = env.SERVICES.split(',')
