@@ -73,7 +73,7 @@ pipeline {
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Install Depends') {
             steps {
                 dir("${env.FRONTEND_DIR}") {
                     sh '''
