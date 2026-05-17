@@ -1,0 +1,363 @@
+// ============================================================
+// Backend Pipeline – Stadium Ticket Booking System
+// Builds all microservices → Docker rebuild → Ansible Deploy → K8s → Seed → Live
+// ============================================================
+pipeline {
+    agent any
+    options { timestamps() }
+    triggers { githubPush() }
+
+    parameters {
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: "build-${env.BUILD_NUMBER}",
+            description: 'Docker image tag for all services'
+        )
+        booleanParam(
+            name: 'DEPLOY_K8S',
+            defaultValue: false,
+            description: 'Also deploy to Minikube after Ansible deploy?'
+        )
+    }
+
+    environment {
+        DOCKER_REPO   = 'abhashti'
+        K8S_NAMESPACE = 'movie-app'
+        BACKEND_DIR   = "${WORKSPACE}/Movie-Booking-System-Microservices"
+        SERVICES      = 'discovery-server,api-gateway,user-service,match-service,booking-service,payment-service,notification-service'
+
+        KUBECTL = sh(
+            script: '''
+                if [ -f /opt/homebrew/bin/kubectl ]; then
+                    echo /opt/homebrew/bin/kubectl
+                elif [ -f /usr/local/bin/kubectl ]; then
+                    echo /usr/local/bin/kubectl
+                else
+                    echo kubectl
+                fi
+            ''',
+            returnStdout: true
+        ).trim()
+
+        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
+    }
+
+    stages {
+
+        stage('checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        stage('Check Changes') {
+            steps {
+                script {
+                    def changes = sh(
+                        script: "git diff --name-only HEAD~1 HEAD 2>/dev/null || echo 'Movie-Booking-System-Microservices/'",
+                        returnStdout: true
+                    ).trim()
+                    if (!changes.contains('Movie-Booking-System-Microservices/')) {
+                        currentBuild.result = 'NOT_BUILT'
+                        error("No backend changes — skipping pipeline.")
+                    }
+                    echo "Backend changes detected, proceeding."
+                }
+            }
+        }
+
+
+        stage('verify Tools') {
+            steps {
+                sh '''
+                    echo "=== PATH ==="
+                    echo "$PATH"
+
+                    echo "=== kubectl ==="
+                    which kubectl || echo "kubectl NOT FOUND"
+                    kubectl version --client 2>/dev/null || echo "kubectl not working"
+
+                    echo "=== minikube ==="
+                    which minikube || echo "minikube NOT FOUND"
+                    minikube version 2>/dev/null || echo "minikube not working"
+
+                    echo "=== ansible ==="
+                    which ansible-playbook || echo "ansible-playbook NOT FOUND"
+                    ansible --version 2>/dev/null || echo "ansible not working"
+
+                    echo "=== docker ==="
+                    docker --version || echo "docker NOT FOUND"
+
+                    echo "=== java / mvn ==="
+                    java -version 2>&1 || echo "java NOT FOUND"
+                    mvn -version 2>/dev/null || echo "mvn NOT FOUND"
+                '''
+            }
+        }
+
+        stage('Build All Microservices') {
+            steps {
+                script {
+                    def serviceList = env.SERVICES.split(',')
+                    serviceList.each { svc ->
+                        dir("${env.BACKEND_DIR}/${svc}") {
+                            echo "===== Building ${svc} ====="
+                            sh '''
+                                chmod +x mvnw 2>/dev/null || true
+                                if [ -f ./mvnw ]; then
+                                    ./mvnw -B clean package -DskipTests -q
+                                else
+                                    mvn -B clean package -DskipTests -q
+                                fi
+                            '''
+                            echo "===== ${svc} DONE ====="
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Docker Build All') {
+            steps {
+                script {
+                    def imageTag = params.IMAGE_TAG ?: "build-${env.BUILD_NUMBER}"
+                    env.IMAGE_TAG_FINAL = imageTag
+                    def serviceList = env.SERVICES.split(',')
+                    serviceList.each { svc ->
+                        dir("${env.BACKEND_DIR}/${svc}") {
+                            def imageName = "${env.DOCKER_REPO}/${svc}:${imageTag}"
+                            echo "Building Docker image: ${imageName}"
+                            sh "docker build -t ${imageName} ."
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Docker Push All') {
+            when { expression { currentBuild.currentResult == 'SUCCESS' } }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USERNAME',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
+                    script {
+                        sh 'echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin'
+                        def serviceList = env.SERVICES.split(',')
+                        serviceList.each { svc ->
+                            def imageName = "${env.DOCKER_REPO}/${svc}:${env.IMAGE_TAG_FINAL}"
+                            echo "Pushing ${imageName}..."
+                            sh "docker push ${imageName}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Ansible Deploy') {
+            when { expression { currentBuild.currentResult == 'SUCCESS' } }
+            steps {
+                echo "Running Ansible playbook to deploy all services..."
+                sh '''
+                    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+                    if ! command -v ansible-playbook &>/dev/null; then
+                        echo "Ansible not found — installing via Homebrew..."
+                        brew install ansible
+                    fi
+                    ansible --version
+                '''
+                dir("${env.BACKEND_DIR}") {
+                    sh """
+                        export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
+                        ansible-playbook \\
+                            -i ${env.BACKEND_DIR}/ansible/inventory.ini \\
+                            ${env.BACKEND_DIR}/ansible/deploy.yml \\
+                            -e "image_tag=${env.IMAGE_TAG_FINAL}" \\
+                            -v
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to Minikube (Optional)') {
+            when {
+                allOf {
+                    expression { currentBuild.currentResult == 'SUCCESS' }
+                    expression { params.DEPLOY_K8S == true }
+                }
+            }
+            steps {
+                script {
+                    sh """
+                        export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
+
+                        if ! command -v kubectl &>/dev/null; then
+                            brew install kubectl
+                        fi
+                        if ! command -v minikube &>/dev/null; then
+                            brew install minikube
+                        fi
+
+                        MINIKUBE_STATUS=\$(minikube status --format='{{.Host}}' 2>/dev/null || echo "Stopped")
+                        if [ "\$MINIKUBE_STATUS" != "Running" ]; then
+                            echo "Starting minikube..."
+                            minikube start --driver=docker
+                        else
+                            echo "Minikube already running"
+                        fi
+
+                        kubectl config use-context minikube
+                        kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+
+                        K8S_DIR="${env.BACKEND_DIR}/k8s"
+
+                        echo "=== Applying infrastructure (DBs, Redis, RabbitMQ) ==="
+                        kubectl apply -f \$K8S_DIR/user-db/user-db-secret.yaml    -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/user-db/user-db-statefulset.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/user-db/user-db-service.yaml   -n ${env.K8S_NAMESPACE}
+
+                        kubectl apply -f \$K8S_DIR/movie-db/movie-db-secret.yaml    -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/movie-db/movie-db-statefulset.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/movie-db/movie-db-service.yaml   -n ${env.K8S_NAMESPACE}
+
+                        kubectl apply -f \$K8S_DIR/booking-db/booking-db-secret.yaml    -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/booking-db/booking-db-statefulset.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/booking-db/booking-db-service.yaml   -n ${env.K8S_NAMESPACE}
+
+                        kubectl apply -f \$K8S_DIR/redis/redis-deployment.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/redis/redis-service.yaml    -n ${env.K8S_NAMESPACE}
+
+                        kubectl apply -f \$K8S_DIR/rabbitmq/rabbitmq-secret.yaml     -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/rabbitmq/rabbitmq-deployment.yaml -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/rabbitmq/rabbitmq-service.yaml    -n ${env.K8S_NAMESPACE}
+
+                        echo "Waiting 30s for DBs to initialise..."
+                        sleep 30
+
+                        echo "=== Loading all service images into Minikube ==="
+                        for SVC in discovery-server api-gateway user-service match-service booking-service payment-service notification-service; do
+                            echo "Loading abhashti/\$SVC:${env.IMAGE_TAG_FINAL}..."
+                            minikube image load abhashti/\$SVC:${env.IMAGE_TAG_FINAL}
+                        done
+
+                        echo "=== Applying discovery-server (eureka) ==="
+                        sed -e 's|image: .*|image: abhashti/discovery-server:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                            \$K8S_DIR/eureka/eureka-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/eureka/eureka-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying api-gateway ==="
+                        sed -e 's|image: .*|image: abhashti/api-gateway:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                            \$K8S_DIR/api-gateway/api-gateway-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/api-gateway/api-gateway-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying user-service ==="
+                        sed -e 's|image: .*|image: abhashti/user-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                            \$K8S_DIR/user-service/user-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/user-service/user-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying match-service ==="
+                        sed -e 's|image: .*|image: abhashti/match-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                            \$K8S_DIR/match-service/movie-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/match-service/movie-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying booking-service ==="
+                        sed -e 's|image: .*|image: abhashti/booking-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                            \$K8S_DIR/booking-service/booking-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/booking-service/booking-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying payment-service ==="
+                        sed -e 's|image: .*|image: abhashti/payment-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                            \$K8S_DIR/payment-service/payment-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/payment-service/payment-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Applying notification-service ==="
+                        sed -e 's|image: .*|image: abhashti/notification-service:${env.IMAGE_TAG_FINAL}|g' \\
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                            \$K8S_DIR/notification-service/notification-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
+                        kubectl apply -f \$K8S_DIR/notification-service/notification-service-service.yaml -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Waiting for all rollouts ==="
+                        for DEPLOY in eureka api-gateway user-service movie-service booking-service payment-service notification-service; do
+                            echo "Waiting for \$DEPLOY..."
+                            kubectl rollout status deployment/\$DEPLOY \\
+                                -n ${env.K8S_NAMESPACE} --timeout=300s || \\
+                            echo "WARNING: \$DEPLOY rollout timed out — check pod logs"
+                        done
+
+                        echo "=== Final pod status ==="
+                        kubectl get pods -n ${env.K8S_NAMESPACE}
+
+                        echo "=== Final service status ==="
+                        kubectl get svc -n ${env.K8S_NAMESPACE}
+                    """
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════════
+        // SEED STAGE — populates match + session data
+        // Only runs when K8s deploy is enabled
+        // Safe to re-run — seed_matches.py skips existing data
+        // ══════════════════════════════════════════════════
+        stage('Seed Match Data') {
+            when {
+                allOf {
+                    expression { currentBuild.currentResult == 'SUCCESS' }
+                    expression { params.DEPLOY_K8S == true }
+                }
+            }
+            steps {
+                sh """
+                    export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
+
+                    echo "=== Waiting 20s for services to register with Eureka ==="
+                    sleep 20
+
+                    echo "=== Starting port-forward to api-gateway ==="
+                    pkill -f "port-forward.*8085" 2>/dev/null || true
+                    sleep 2
+                    kubectl port-forward svc/api-gateway 8085:8085 -n ${env.K8S_NAMESPACE} &
+                    PF_PID=\$!
+                    echo "Port-forward PID: \$PF_PID"
+                    sleep 8
+
+                    echo "=== Installing python requests if missing ==="
+                    pip3 install requests --break-system-packages --quiet 2>/dev/null || true
+
+                    echo "=== Running seed script ==="
+                    python3 ${WORKSPACE}/seed_matches.py || echo "Seed completed (some matches may already exist)"
+
+                    echo "=== Stopping port-forward ==="
+                    kill \$PF_PID 2>/dev/null || true
+
+                    echo "=== Seed stage done ==="
+                """
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo "Backend pipeline SUCCESS (Build #${env.BUILD_NUMBER})"
+            echo ""
+            echo "╔══════════════════════════════════════════╗"
+            echo "║         STADIUMPASS IS LIVE! 🏏           ║"
+            echo "╠══════════════════════════════════════════╣"
+            echo "║  Docker mode  → http://localhost:80       ║"
+            echo "║  K8s mode     → run:                      ║"
+            echo "║  minikube service match-frontend           ║"
+            echo "║               -n movie-app                 ║"
+            echo "╚══════════════════════════════════════════╝"
+        }
+        failure {
+            echo "Backend pipeline FAILED at Build #${env.BUILD_NUMBER}"
+        }
+    }
+}
