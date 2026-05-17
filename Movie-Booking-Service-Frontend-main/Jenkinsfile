@@ -119,6 +119,47 @@ pipeline {
             }
         }
 
+        stage('Trivy Image Scan') {
+    steps {
+        sh '''
+            export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+            echo "=== Installing Trivy if missing ==="
+
+            if ! command -v trivy &>/dev/null; then
+                brew install trivy 2>/dev/null || \
+                curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | \
+                    sh -s -- -b /usr/local/bin
+            fi
+
+            trivy --version
+
+            mkdir -p "${WORKSPACE}/trivy-reports"
+
+            echo "=== Scanning frontend image ==="
+
+            trivy image \
+                --exit-code 0 \
+                --severity HIGH,CRITICAL \
+                --format table \
+                --output "${WORKSPACE}/trivy-reports/frontend-scan.txt" \
+                ${IMAGE_NAME} || true
+
+            echo "=== Scan Summary ==="
+
+            cat "${WORKSPACE}/trivy-reports/frontend-scan.txt" | tail -30
+
+            echo "=== Trivy scan complete ==="
+        '''
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'trivy-reports/frontend-scan.txt', allowEmptyArchive: true
+        }
+    }
+}
+
         stage('Docker Push') {
             when { expression { currentBuild.currentResult == 'SUCCESS' } }
             steps {
