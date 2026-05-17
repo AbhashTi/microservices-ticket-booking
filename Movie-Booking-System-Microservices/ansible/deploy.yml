@@ -152,7 +152,7 @@
         --name frontend-app-container
         --network {{ docker_network }}
         -p 80:80
-        {{ docker_repo }}/match-frontend:{{ image_tag }}
+        {{ docker_repo }}/match-frontend:latest
       register: frontend_start
       changed_when: true
 
