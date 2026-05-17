@@ -49,6 +49,22 @@ pipeline {
                 checkout scm
             }
         }
+        stage('Check Changes') {
+            steps {
+                script {
+                    def changes = sh(
+                        script: "git diff --name-only HEAD~1 HEAD 2>/dev/null || echo 'Movie-Booking-System-Microservices/'",
+                        returnStdout: true
+                    ).trim()
+                    if (!changes.contains('Movie-Booking-System-Microservices/')) {
+                        currentBuild.result = 'NOT_BUILT'
+                        error("No backend changes — skipping pipeline.")
+                    }
+                    echo "Backend changes detected, proceeding."
+                }
+            }
+        }
+
 
         stage('verify Tools') {
             steps {

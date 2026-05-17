@@ -52,6 +52,22 @@ pipeline {
                 checkout scm
             }
         }
+        stage('Check Changes') {
+            steps {
+                script {
+                    def changes = sh(
+                        script: "git diff --name-only HEAD~1 HEAD 2>/dev/null || echo 'Movie-Booking-Service-Frontend-main/'",
+                        returnStdout: true
+                    ).trim()
+                    if (!changes.contains('Movie-Booking-Service-Frontend-main/')) {
+                        currentBuild.result = 'NOT_BUILT'
+                        error("No frontend changes — skipping pipeline.")
+                    }
+                    echo "Frontend changes detected, proceeding."
+                }
+            }
+        }
+
 
         // ✅ FIX: Verify kubectl & minikube are reachable before any deploy attempt
         stage('Verify Tools') {
