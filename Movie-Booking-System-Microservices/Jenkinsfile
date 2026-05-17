@@ -116,6 +116,53 @@ pipeline {
             }
         }
 
+        stage('Trivy Image Scan') {
+    steps {
+        sh '''
+            export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+            echo "=== Installing Trivy if missing ==="
+            if ! command -v trivy &>/dev/null; then
+                brew install trivy 2>/dev/null || \
+                curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | \
+                    sh -s -- -b /usr/local/bin
+            fi
+
+            trivy --version
+            mkdir -p "${WORKSPACE}/trivy-reports"
+
+            echo "=== Scanning all backend images ==="
+
+            for SVC in discovery-server api-gateway user-service match-service booking-service payment-service notification-service; do
+
+                IMAGE="abhashti/${SVC}:${IMAGE_TAG_FINAL}"
+
+                echo "--- Scanning: ${IMAGE} ---"
+
+                trivy image \
+                    --exit-code 0 \
+                    --severity HIGH,CRITICAL \
+                    --format table \
+                    --output "${WORKSPACE}/trivy-reports/${SVC}-scan.txt" \
+                    ${IMAGE} || true
+
+                echo "=== ${SVC} scan summary ==="
+
+                cat "${WORKSPACE}/trivy-reports/${SVC}-scan.txt" | tail -20
+
+            done
+
+            echo "=== All Trivy scans complete ==="
+        '''
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'trivy-reports/*.txt', allowEmptyArchive: true
+        }
+    }
+}
+
         stage('Docker Push All') {
             when { expression { currentBuild.currentResult == 'SUCCESS' } }
             steps {
