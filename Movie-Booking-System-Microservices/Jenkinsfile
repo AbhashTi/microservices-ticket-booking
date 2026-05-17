@@ -50,7 +50,7 @@ pipeline {
             }
         }
 
-        stage('Verify Tools') {
+        stage('verify Tools') {
             steps {
                 sh '''
                     echo "=== PATH ==="
