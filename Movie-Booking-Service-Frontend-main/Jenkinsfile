@@ -1,6 +1,7 @@
 // ============================================================
 // Frontend Pipeline – Stadium Ticket Booking System
 // npm install → React build → Docker build → Push → Restart container
+// DevSecOps: Trivy Image Scan
 // ============================================================
 pipeline {
     agent any
@@ -26,7 +27,6 @@ pipeline {
         FRONTEND_DIR  = "${WORKSPACE}/Movie-Booking-Service-Frontend-main"
         NODE_VERSION  = '18'
 
-        // ✅ FIX: macOS kubectl paths — tries Homebrew (Apple Silicon & Intel) then fallback
         KUBECTL = sh(
             script: '''
                 if [ -f /opt/homebrew/bin/kubectl ]; then
@@ -40,7 +40,6 @@ pipeline {
             returnStdout: true
         ).trim()
 
-        // ✅ FIX: Ensure Homebrew bin dirs are always on PATH for all sh steps
         PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
     }
 
@@ -52,23 +51,21 @@ pipeline {
             }
         }
 
-        // ✅ FIX: Verify kubectl & minikube are reachable before any deploy attempt
         stage('Verify Tools') {
             steps {
                 sh '''
                     echo "=== PATH ==="
                     echo "$PATH"
-
                     echo "=== kubectl ==="
                     which kubectl || echo "kubectl NOT FOUND"
                     kubectl version --client 2>/dev/null || echo "kubectl not working"
-
                     echo "=== minikube ==="
                     which minikube || echo "minikube NOT FOUND"
                     minikube version 2>/dev/null || echo "minikube not working"
-
                     echo "=== docker ==="
                     docker --version || echo "docker NOT FOUND"
+                    echo "=== trivy ==="
+                    which trivy || echo "trivy NOT FOUND — will install if needed"
                 '''
             }
         }
@@ -97,8 +94,6 @@ pipeline {
                         [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
                         nvm use 18
                         CI=false npm run build
-                        # Remove any hardcoded VM IPs from compiled output
-                        # ✅ FIX: macOS sed requires '' after -i (unlike Linux)
                         find build/static/js -name "*.js" -exec sed -i '' 's|http://172.16.180.127:8085||g' {} +
                     '''
                     echo "React build complete"
@@ -115,6 +110,47 @@ pipeline {
                 dir("${env.FRONTEND_DIR}") {
                     echo "Building Docker image: ${env.IMAGE_NAME}"
                     sh "docker build -t ${env.IMAGE_NAME} ."
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════════
+        // DEVSECOPS — Trivy Image Scan
+        // Scans the frontend nginx image for CVEs
+        // Reports saved as build artifacts
+        // ══════════════════════════════════════════════════
+        stage('Trivy Image Scan') {
+            steps {
+                sh '''
+                    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+                    echo "=== Installing Trivy if missing ==="
+                    if ! command -v trivy &>/dev/null; then
+                        brew install trivy 2>/dev/null || \
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | \
+                            sh -s -- -b /usr/local/bin
+                    fi
+
+                    trivy --version
+                    mkdir -p "${WORKSPACE}/trivy-reports"
+
+                    echo "=== Scanning frontend image: ${IMAGE_NAME} ==="
+                    trivy image \
+                        --exit-code 0 \
+                        --severity HIGH,CRITICAL \
+                        --format table \
+                        --output "${WORKSPACE}/trivy-reports/frontend-scan.txt" \
+                        ${IMAGE_NAME} || true
+
+                    echo "=== Scan Summary ==="
+                    cat "${WORKSPACE}/trivy-reports/frontend-scan.txt" | tail -30
+
+                    echo "=== Trivy scan complete. Report saved. ==="
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-reports/frontend-scan.txt', allowEmptyArchive: true
                 }
             }
         }
@@ -153,7 +189,6 @@ pipeline {
             }
         }
 
-        // ✅ FIX: Full minikube + kubectl setup for macOS before deploying
         stage('Deploy to Minikube (Optional)') {
             when {
                 allOf {
@@ -165,64 +200,37 @@ pipeline {
                 sh """
                     export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
 
-                    # ✅ Install kubectl via Homebrew if missing
-                    if ! command -v kubectl &>/dev/null; then
-                        echo "kubectl not found — installing via Homebrew..."
-                        brew install kubectl
-                    fi
+                    if ! command -v kubectl &>/dev/null; then brew install kubectl; fi
+                    if ! command -v minikube &>/dev/null; then brew install minikube; fi
 
-                    # ✅ Install minikube via Homebrew if missing
-                    if ! command -v minikube &>/dev/null; then
-                        echo "minikube not found — installing via Homebrew..."
-                        brew install minikube
-                    fi
-
-                    # ✅ Start minikube if it is not already running
                     MINIKUBE_STATUS=\$(minikube status --format='{{.Host}}' 2>/dev/null || echo "Stopped")
                     if [ "\$MINIKUBE_STATUS" != "Running" ]; then
-                        echo "Starting minikube..."
                         minikube start --driver=docker
-                    else
-                        echo "Minikube already running"
                     fi
 
-                    # ✅ Make sure kubectl context points to minikube
                     kubectl config use-context minikube
-
-                    # ✅ FIX 1: Load the locally built Docker image directly into Minikube
-                    # This avoids Minikube trying to pull from Docker Hub and getting stuck
                     echo "Loading image into Minikube: ${env.IMAGE_NAME}"
                     minikube image load ${env.IMAGE_NAME}
-                    echo "Image loaded successfully into Minikube"
 
-                    # Create namespace
                     kubectl create namespace ${env.K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
 
-                    # ✅ FIX 2: Patch the YAML — set image AND change imagePullPolicy to Never
-                    # so Minikube uses the locally loaded image instead of pulling from Docker Hub
                     sed \
                         -e 's|image: .*|image: ${env.IMAGE_NAME}|g' \
                         -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
                         ${env.FRONTEND_DIR}/k8s/frontend-deployment.yaml | \
                         kubectl apply -f - -n ${env.K8S_NAMESPACE}
 
-                    kubectl apply -f ${env.FRONTEND_DIR}/k8s/frontend-service.yaml \
-                        -n ${env.K8S_NAMESPACE}
+                    kubectl apply -f ${env.FRONTEND_DIR}/k8s/frontend-service.yaml -n ${env.K8S_NAMESPACE}
 
-                    # Update image on existing deployment
                     kubectl set image deployment/${env.SERVICE_NAME} \
                         ${env.SERVICE_NAME}=${env.IMAGE_NAME} \
                         -n ${env.K8S_NAMESPACE}
 
-                    # ✅ FIX 3: Increase timeout to 5 minutes — image load + pod start takes time
                     kubectl rollout status deployment/${env.SERVICE_NAME} \
                         -n ${env.K8S_NAMESPACE} --timeout=300s
 
-                    echo "=== Pod status ==="
                     kubectl get pods -n ${env.K8S_NAMESPACE}
-
-                    echo "=== Service status ==="
-                    kubectl get svc -n ${env.K8S_NAMESPACE}
+                    kubectl get svc  -n ${env.K8S_NAMESPACE}
                 """
             }
         }

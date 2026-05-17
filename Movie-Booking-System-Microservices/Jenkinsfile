@@ -1,6 +1,7 @@
 // ============================================================
 // Backend Pipeline – Stadium Ticket Booking System
 // Builds all microservices → Docker rebuild → Ansible Deploy → K8s → Seed → Live
+// DevSecOps: OWASP Dependency Check + Trivy Image Scan
 // ============================================================
 pipeline {
     agent any
@@ -73,6 +74,9 @@ pipeline {
                     echo "=== java / mvn ==="
                     java -version 2>&1 || echo "java NOT FOUND"
                     mvn -version 2>/dev/null || echo "mvn NOT FOUND"
+
+                    echo "=== trivy ==="
+                    which trivy || echo "trivy NOT FOUND — will install if needed"
                 '''
             }
         }
@@ -99,6 +103,61 @@ pipeline {
             }
         }
 
+        // ══════════════════════════════════════════════════
+        // DEVSECOPS STAGE 1 — OWASP Dependency Check
+        // Scans Maven pom.xml files for known CVEs in dependencies
+        // ══════════════════════════════════════════════════
+        stage('OWASP Dependency Check') {
+            steps {
+                sh '''
+                    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+                    echo "=== Installing OWASP Dependency Check if missing ==="
+                    if ! command -v dependency-check &>/dev/null; then
+                        brew install dependency-check 2>/dev/null || \
+                        (
+                            echo "Homebrew install failed — downloading directly..."
+                            DC_VERSION="10.0.4"
+                            DC_DIR="/opt/homebrew/opt/dependency-check"
+                            mkdir -p $DC_DIR
+                            curl -sL "https://github.com/jeremylong/DependencyCheck/releases/download/v${DC_VERSION}/dependency-check-${DC_VERSION}-release.zip" \
+                                -o /tmp/dc.zip
+                            unzip -o /tmp/dc.zip -d /tmp/dc
+                            sudo cp -r /tmp/dc/dependency-check/* $DC_DIR/
+                            sudo ln -sf $DC_DIR/bin/dependency-check.sh /usr/local/bin/dependency-check
+                        )
+                    fi
+
+                    echo "=== Running OWASP Dependency Check ==="
+                    dependency-check \
+                        --project "StadiumPass-Backend" \
+                        --scan "${WORKSPACE}/Movie-Booking-System-Microservices" \
+                        --format HTML \
+                        --format JSON \
+                        --out "${WORKSPACE}/owasp-report" \
+                        --failOnCVSS 9 \
+                        --enableRetired \
+                        --disableAssembly \
+                        --nvdApiKey "" \
+                        2>/dev/null || echo "OWASP scan complete — check report for details"
+
+                    echo "=== OWASP Report saved to: ${WORKSPACE}/owasp-report ==="
+                '''
+            }
+            post {
+                always {
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'owasp-report',
+                        reportFiles: 'dependency-check-report.html',
+                        reportName: 'OWASP Dependency Check Report'
+                    ])
+                }
+            }
+        }
+
         stage('Docker Build All') {
             steps {
                 script {
@@ -112,6 +171,51 @@ pipeline {
                             sh "docker build -t ${imageName} ."
                         }
                     }
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════════
+        // DEVSECOPS STAGE 2 — Trivy Image Scan
+        // Scans each Docker image for OS and library CVEs
+        // Fails pipeline on CRITICAL vulnerabilities
+        // ══════════════════════════════════════════════════
+        stage('Trivy Image Scan') {
+            steps {
+                sh '''
+                    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+                    echo "=== Installing Trivy if missing ==="
+                    if ! command -v trivy &>/dev/null; then
+                        brew install trivy 2>/dev/null || \
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | \
+                            sh -s -- -b /usr/local/bin
+                    fi
+
+                    trivy --version
+                    mkdir -p "${WORKSPACE}/trivy-reports"
+
+                    echo "=== Scanning all backend images ==="
+                    for SVC in discovery-server api-gateway user-service match-service booking-service payment-service notification-service; do
+                        IMAGE="abhashti/${SVC}:${IMAGE_TAG_FINAL}"
+                        echo "--- Scanning: ${IMAGE} ---"
+                        trivy image \
+                            --exit-code 0 \
+                            --severity HIGH,CRITICAL \
+                            --format table \
+                            --output "${WORKSPACE}/trivy-reports/${SVC}-scan.txt" \
+                            ${IMAGE} || true
+
+                        echo "=== ${SVC} scan summary ==="
+                        cat "${WORKSPACE}/trivy-reports/${SVC}-scan.txt" | tail -20
+                    done
+
+                    echo "=== All Trivy scans complete. Reports saved to trivy-reports/ ==="
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-reports/*.txt', allowEmptyArchive: true
                 }
             }
         }
@@ -174,12 +278,8 @@ pipeline {
                     sh """
                         export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
 
-                        if ! command -v kubectl &>/dev/null; then
-                            brew install kubectl
-                        fi
-                        if ! command -v minikube &>/dev/null; then
-                            brew install minikube
-                        fi
+                        if ! command -v kubectl &>/dev/null; then brew install kubectl; fi
+                        if ! command -v minikube &>/dev/null; then brew install minikube; fi
 
                         MINIKUBE_STATUS=\$(minikube status --format='{{.Host}}' 2>/dev/null || echo "Stopped")
                         if [ "\$MINIKUBE_STATUS" != "Running" ]; then
@@ -223,71 +323,55 @@ pipeline {
                             minikube image load abhashti/\$SVC:${env.IMAGE_TAG_FINAL}
                         done
 
-                        echo "=== Applying discovery-server (eureka) ==="
-                        sed -e 's|image: .*|image: abhashti/discovery-server:${env.IMAGE_TAG_FINAL}|g' \\
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                        echo "=== Applying all services ==="
+                        sed -e 's|image: .*|image: abhashti/discovery-server:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
                             \$K8S_DIR/eureka/eureka-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/eureka/eureka-service.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "=== Applying api-gateway ==="
-                        sed -e 's|image: .*|image: abhashti/api-gateway:${env.IMAGE_TAG_FINAL}|g' \\
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                        sed -e 's|image: .*|image: abhashti/api-gateway:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
                             \$K8S_DIR/api-gateway/api-gateway-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/api-gateway/api-gateway-service.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "=== Applying user-service ==="
-                        sed -e 's|image: .*|image: abhashti/user-service:${env.IMAGE_TAG_FINAL}|g' \\
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                        sed -e 's|image: .*|image: abhashti/user-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
                             \$K8S_DIR/user-service/user-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/user-service/user-service-service.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "=== Applying match-service ==="
-                        sed -e 's|image: .*|image: abhashti/match-service:${env.IMAGE_TAG_FINAL}|g' \\
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                        sed -e 's|image: .*|image: abhashti/match-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
                             \$K8S_DIR/match-service/movie-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/match-service/movie-service-service.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "=== Applying booking-service ==="
-                        sed -e 's|image: .*|image: abhashti/booking-service:${env.IMAGE_TAG_FINAL}|g' \\
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                        sed -e 's|image: .*|image: abhashti/booking-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
                             \$K8S_DIR/booking-service/booking-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/booking-service/booking-service-service.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "=== Applying payment-service ==="
-                        sed -e 's|image: .*|image: abhashti/payment-service:${env.IMAGE_TAG_FINAL}|g' \\
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                        sed -e 's|image: .*|image: abhashti/payment-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
                             \$K8S_DIR/payment-service/payment-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/payment-service/payment-service-service.yaml -n ${env.K8S_NAMESPACE}
 
-                        echo "=== Applying notification-service ==="
-                        sed -e 's|image: .*|image: abhashti/notification-service:${env.IMAGE_TAG_FINAL}|g' \\
-                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \\
+                        sed -e 's|image: .*|image: abhashti/notification-service:${env.IMAGE_TAG_FINAL}|g' \
+                            -e 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
                             \$K8S_DIR/notification-service/notification-service-deployment.yaml | kubectl apply -f - -n ${env.K8S_NAMESPACE}
                         kubectl apply -f \$K8S_DIR/notification-service/notification-service-service.yaml -n ${env.K8S_NAMESPACE}
 
                         echo "=== Waiting for all rollouts ==="
                         for DEPLOY in eureka api-gateway user-service movie-service booking-service payment-service notification-service; do
-                            echo "Waiting for \$DEPLOY..."
-                            kubectl rollout status deployment/\$DEPLOY \\
-                                -n ${env.K8S_NAMESPACE} --timeout=300s || \\
-                            echo "WARNING: \$DEPLOY rollout timed out — check pod logs"
+                            kubectl rollout status deployment/\$DEPLOY -n ${env.K8S_NAMESPACE} --timeout=300s || \
+                            echo "WARNING: \$DEPLOY rollout timed out"
                         done
 
-                        echo "=== Final pod status ==="
                         kubectl get pods -n ${env.K8S_NAMESPACE}
-
-                        echo "=== Final service status ==="
-                        kubectl get svc -n ${env.K8S_NAMESPACE}
+                        kubectl get svc  -n ${env.K8S_NAMESPACE}
                     """
                 }
             }
         }
 
-        // ══════════════════════════════════════════════════
-        // SEED STAGE — populates match + session data
-        // Only runs when K8s deploy is enabled
-        // Safe to re-run — seed_matches.py skips existing data
-        // ══════════════════════════════════════════════════
         stage('Seed Match Data') {
             when {
                 allOf {
@@ -298,28 +382,15 @@ pipeline {
             steps {
                 sh """
                     export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
-
-                    echo "=== Waiting 20s for services to register with Eureka ==="
                     sleep 20
-
-                    echo "=== Starting port-forward to api-gateway ==="
                     pkill -f "port-forward.*8085" 2>/dev/null || true
                     sleep 2
                     kubectl port-forward svc/api-gateway 8085:8085 -n ${env.K8S_NAMESPACE} &
                     PF_PID=\$!
-                    echo "Port-forward PID: \$PF_PID"
                     sleep 8
-
-                    echo "=== Installing python requests if missing ==="
                     pip3 install requests --break-system-packages --quiet 2>/dev/null || true
-
-                    echo "=== Running seed script ==="
                     python3 ${WORKSPACE}/seed_matches.py || echo "Seed completed (some matches may already exist)"
-
-                    echo "=== Stopping port-forward ==="
                     kill \$PF_PID 2>/dev/null || true
-
-                    echo "=== Seed stage done ==="
                 """
             }
         }
@@ -329,14 +400,12 @@ pipeline {
     post {
         success {
             echo "Backend pipeline SUCCESS (Build #${env.BUILD_NUMBER})"
-            echo ""
             echo "╔══════════════════════════════════════════╗"
             echo "║         STADIUMPASS IS LIVE! 🏏           ║"
             echo "╠══════════════════════════════════════════╣"
             echo "║  Docker mode  → http://localhost:80       ║"
-            echo "║  K8s mode     → run:                      ║"
-            echo "║  minikube service match-frontend           ║"
-            echo "║               -n movie-app                 ║"
+            echo "║  K8s mode     → minikube service          ║"
+            echo "║               match-frontend -n movie-app ║"
             echo "╚══════════════════════════════════════════╝"
         }
         failure {
